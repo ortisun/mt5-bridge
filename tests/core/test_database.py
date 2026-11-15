@@ -1,11 +1,15 @@
 """BridgeDatabase: the journal/audit file is owner-only (plan §112)."""
 
 import stat
+import sys
 from pathlib import Path
+
+import pytest
 
 from mt5_bridge.core.database import BridgeDatabase
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX permission bits")
 def test_a_file_backed_database_is_created_owner_read_write_only(tmp_path: Path) -> None:
     db_path = tmp_path / "bridge.sqlite3"
 

@@ -1,5 +1,6 @@
 """main.boot(): the exact composition root, exercised with the fake backend."""
 
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -73,6 +74,7 @@ def test_boot_rejects_an_unknown_client_backend(tmp_path: Path) -> None:
         boot(env(tmp_path, MT5_BRIDGE_CLIENT_BACKEND="quantum"), NO_SECRETS)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the real backend is available on Windows")
 def test_real_backend_off_windows_fails_clearly(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="requires Windows"):
         boot(env(tmp_path, MT5_BRIDGE_CLIENT_BACKEND="real"), NO_SECRETS)

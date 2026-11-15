@@ -74,4 +74,9 @@ async def test_the_lifespan_serves_grpc_while_the_app_runs() -> None:
     async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
         with pytest.raises(grpc.aio.AioRpcError) as stopped:
             await pb_grpc.MarketDataStub(channel).GetAccount(pb.GetAccountRequest(), timeout=2)
-    assert stopped.value.code() is grpc.StatusCode.UNAVAILABLE
+    # A refused connection is UNAVAILABLE where the system refuses at once; where it
+    # does not (Windows), the call runs into its deadline instead.
+    assert stopped.value.code() in {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.DEADLINE_EXCEEDED,
+    }
