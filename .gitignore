@@ -1,0 +1,28 @@
+# Python environments, caches and build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local environment and OS files
+.env
+.env.*
+bridge.env
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.pem
+.DS_Store
+
+# Local agent state
+.claude/settings.local.json
+.claude/worktrees/
