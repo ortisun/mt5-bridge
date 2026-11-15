@@ -9,7 +9,8 @@ HTTP or gRPC and never touch the terminal.
 The bridge has no strategy, signal or portfolio logic. It does four things:
 
 - reads the terminal: account, symbols, bars, ticks, book depth, positions,
-  order and deal history;
+  order and deal history; bars and ticks by date range, in pages
+  ([`docs/history-ranges.md`](docs/history-ranges.md));
 - sends orders idempotently: a `client_order_id` is journaled before the
   terminal is called, so a repeated request never becomes a second order, and
   an outcome it could not confirm is reported as `UNKNOWN`, never guessed;

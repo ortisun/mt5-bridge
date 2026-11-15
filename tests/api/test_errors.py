@@ -108,7 +108,7 @@ class TestValidation:
         with TypedTestClient(app) as http:
             response = http.get(
                 "/v1/bars",
-                params={"symbol": WINZ25, "timeframe": "M7"},
+                params={"symbol": WINZ25, "timeframe": "M7", "from_epoch": 0, "to_epoch": 60},
             )
 
         assert response.status_code == 422

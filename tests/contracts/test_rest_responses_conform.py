@@ -206,14 +206,14 @@ class TestReplaceOrderResultConforms:
 
 
 class TestTicksConforms:
-    def test_a_default_window_tick_matches_the_tick_schema(self) -> None:
+    def test_the_latest_tick_matches_the_tick_schema(self) -> None:
         app, fake_client, _state = build_test_app()
         fake_client.set_tick(
             WINZ25, bid=Decimal(100), ask=Decimal(101), last=Decimal(100), volume=Decimal(1)
         )
         validator = openapi_schema_validator(OPENAPI, "Tick")
         with TypedTestClient(app) as http:
-            response = http.get("/v1/ticks", params={"symbol": WINZ25})
+            response = http.get("/v1/ticks/latest", params={"symbol": WINZ25})
 
         body = response.json()
         assert len(body) == 1

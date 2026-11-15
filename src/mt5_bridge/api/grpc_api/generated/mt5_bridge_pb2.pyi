@@ -801,34 +801,6 @@ class SymbolDetail(_message.Message):
 Global___SymbolDetail: _TypeAlias = SymbolDetail  # noqa: Y015
 
 @_typing.final
-class ListBarsRequest(_message.Message):
-    DESCRIPTOR: _descriptor.Descriptor
-
-    SYMBOL_FIELD_NUMBER: _builtins.int
-    TIMEFRAME_FIELD_NUMBER: _builtins.int
-    COUNT_FIELD_NUMBER: _builtins.int
-    symbol: _builtins.str
-    timeframe: Global___Timeframe.ValueType
-    count: _builtins.int
-    """100 when absent."""
-    def __init__(
-        self,
-        *,
-        symbol: _builtins.str = ...,
-        timeframe: Global___Timeframe.ValueType = ...,
-        count: _builtins.int | None = ...,
-    ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["_count", b"_count", "count", b"count"]  # noqa: Y015
-    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_count", b"_count", "count", b"count", "symbol", b"symbol", "timeframe", b"timeframe"]  # noqa: Y015
-    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType__count: _TypeAlias = _typing.Literal["count"]  # noqa: Y015
-    _WhichOneofArgType__count: _TypeAlias = _typing.Literal["_count", b"_count"]  # noqa: Y015
-    def WhichOneof(self, oneof_group: _WhichOneofArgType__count) -> _WhichOneofReturnType__count | None: ...
-
-Global___ListBarsRequest: _TypeAlias = ListBarsRequest  # noqa: Y015
-
-@_typing.final
 class Bar(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -870,22 +842,83 @@ class Bar(_message.Message):
 Global___Bar: _TypeAlias = Bar  # noqa: Y015
 
 @_typing.final
+class ListBarsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    SYMBOL_FIELD_NUMBER: _builtins.int
+    TIMEFRAME_FIELD_NUMBER: _builtins.int
+    FROM_EPOCH_FIELD_NUMBER: _builtins.int
+    TO_EPOCH_FIELD_NUMBER: _builtins.int
+    PAGE_FIELD_NUMBER: _builtins.int
+    symbol: _builtins.str
+    timeframe: Global___Timeframe.ValueType
+    from_epoch: _builtins.int
+    """Start of the range, inclusive, epoch seconds."""
+    to_epoch: _builtins.int
+    """End of the range, exclusive, epoch seconds."""
+    page: _builtins.int
+    """1 when absent."""
+    def __init__(
+        self,
+        *,
+        symbol: _builtins.str = ...,
+        timeframe: Global___Timeframe.ValueType = ...,
+        from_epoch: _builtins.int = ...,
+        to_epoch: _builtins.int = ...,
+        page: _builtins.int | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_page", b"_page", "page", b"page"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_page", b"_page", "from_epoch", b"from_epoch", "page", b"page", "symbol", b"symbol", "timeframe", b"timeframe", "to_epoch", b"to_epoch"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__page: _TypeAlias = _typing.Literal["page"]  # noqa: Y015
+    _WhichOneofArgType__page: _TypeAlias = _typing.Literal["_page", b"_page"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__page) -> _WhichOneofReturnType__page | None: ...
+
+Global___ListBarsRequest: _TypeAlias = ListBarsRequest  # noqa: Y015
+
+@_typing.final
 class ListBarsResponse(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
+    SYMBOL_FIELD_NUMBER: _builtins.int
+    TIMEFRAME_FIELD_NUMBER: _builtins.int
+    FROM_EPOCH_FIELD_NUMBER: _builtins.int
+    TO_EPOCH_FIELD_NUMBER: _builtins.int
+    PAGE_FIELD_NUMBER: _builtins.int
+    TOTAL_PAGES_FIELD_NUMBER: _builtins.int
+    NEXT_PAGE_FIELD_NUMBER: _builtins.int
     BARS_FIELD_NUMBER: _builtins.int
+    symbol: _builtins.str
+    timeframe: Global___Timeframe.ValueType
+    from_epoch: _builtins.int
+    to_epoch: _builtins.int
+    page: _builtins.int
+    total_pages: _builtins.int
+    """How many pages the range has; the same on every page."""
+    next_page: _builtins.int
+    """Absent on the last page."""
     @_builtins.property
     def bars(self) -> _containers.RepeatedCompositeFieldContainer[Global___Bar]: ...
     def __init__(
         self,
         *,
+        symbol: _builtins.str = ...,
+        timeframe: Global___Timeframe.ValueType = ...,
+        from_epoch: _builtins.int = ...,
+        to_epoch: _builtins.int = ...,
+        page: _builtins.int = ...,
+        total_pages: _builtins.int = ...,
+        next_page: _builtins.int | None = ...,
         bars: _abc.Iterable[Global___Bar] | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_next_page", b"_next_page", "next_page", b"next_page"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["bars", b"bars"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_next_page", b"_next_page", "bars", b"bars", "from_epoch", b"from_epoch", "next_page", b"next_page", "page", b"page", "symbol", b"symbol", "timeframe", b"timeframe", "to_epoch", b"to_epoch", "total_pages", b"total_pages"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    def WhichOneof(self, oneof_group: _Never) -> None: ...
+    _WhichOneofReturnType__next_page: _TypeAlias = _typing.Literal["next_page"]  # noqa: Y015
+    _WhichOneofArgType__next_page: _TypeAlias = _typing.Literal["_next_page", b"_next_page"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__next_page) -> _WhichOneofReturnType__next_page | None: ...
 
 Global___ListBarsResponse: _TypeAlias = ListBarsResponse  # noqa: Y015
 
@@ -970,34 +1003,31 @@ class ListTicksRequest(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
     SYMBOL_FIELD_NUMBER: _builtins.int
-    COUNT_FIELD_NUMBER: _builtins.int
     FROM_TIME_MSC_FIELD_NUMBER: _builtins.int
+    TO_TIME_MSC_FIELD_NUMBER: _builtins.int
+    CURSOR_FIELD_NUMBER: _builtins.int
     symbol: _builtins.str
-    count: _builtins.int
-    """100 when absent."""
     from_time_msc: _builtins.int
-    """Epoch milliseconds. A recent window when absent; 0 pages from the oldest
-    tick the terminal retains.
-    """
+    """Start of the range, inclusive, epoch milliseconds."""
+    to_time_msc: _builtins.int
+    """End of the range, exclusive, epoch milliseconds."""
+    cursor: _builtins.str
+    """The `next_cursor` of the previous page; absent for the first page."""
     def __init__(
         self,
         *,
         symbol: _builtins.str = ...,
-        count: _builtins.int | None = ...,
-        from_time_msc: _builtins.int | None = ...,
+        from_time_msc: _builtins.int = ...,
+        to_time_msc: _builtins.int = ...,
+        cursor: _builtins.str | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["_count", b"_count", "_from_time_msc", b"_from_time_msc", "count", b"count", "from_time_msc", b"from_time_msc"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_cursor", b"_cursor", "cursor", b"cursor"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_count", b"_count", "_from_time_msc", b"_from_time_msc", "count", b"count", "from_time_msc", b"from_time_msc", "symbol", b"symbol"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_cursor", b"_cursor", "cursor", b"cursor", "from_time_msc", b"from_time_msc", "symbol", b"symbol", "to_time_msc", b"to_time_msc"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType__count: _TypeAlias = _typing.Literal["count"]  # noqa: Y015
-    _WhichOneofArgType__count: _TypeAlias = _typing.Literal["_count", b"_count"]  # noqa: Y015
-    _WhichOneofReturnType__from_time_msc: _TypeAlias = _typing.Literal["from_time_msc"]  # noqa: Y015
-    _WhichOneofArgType__from_time_msc: _TypeAlias = _typing.Literal["_from_time_msc", b"_from_time_msc"]  # noqa: Y015
-    @_typing.overload
-    def WhichOneof(self, oneof_group: _WhichOneofArgType__count) -> _WhichOneofReturnType__count | None: ...
-    @_typing.overload
-    def WhichOneof(self, oneof_group: _WhichOneofArgType__from_time_msc) -> _WhichOneofReturnType__from_time_msc | None: ...
+    _WhichOneofReturnType__cursor: _TypeAlias = _typing.Literal["cursor"]  # noqa: Y015
+    _WhichOneofArgType__cursor: _TypeAlias = _typing.Literal["_cursor", b"_cursor"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__cursor) -> _WhichOneofReturnType__cursor | None: ...
 
 Global___ListTicksRequest: _TypeAlias = ListTicksRequest  # noqa: Y015
 
@@ -1005,19 +1035,34 @@ Global___ListTicksRequest: _TypeAlias = ListTicksRequest  # noqa: Y015
 class ListTicksResponse(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
+    SYMBOL_FIELD_NUMBER: _builtins.int
+    FROM_TIME_MSC_FIELD_NUMBER: _builtins.int
+    TO_TIME_MSC_FIELD_NUMBER: _builtins.int
+    NEXT_CURSOR_FIELD_NUMBER: _builtins.int
     TICKS_FIELD_NUMBER: _builtins.int
+    symbol: _builtins.str
+    from_time_msc: _builtins.int
+    to_time_msc: _builtins.int
+    next_cursor: _builtins.str
+    """Absent when the range has been read to its end."""
     @_builtins.property
     def ticks(self) -> _containers.RepeatedCompositeFieldContainer[Global___Tick]: ...
     def __init__(
         self,
         *,
+        symbol: _builtins.str = ...,
+        from_time_msc: _builtins.int = ...,
+        to_time_msc: _builtins.int = ...,
+        next_cursor: _builtins.str | None = ...,
         ticks: _abc.Iterable[Global___Tick] | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_next_cursor", b"_next_cursor", "next_cursor", b"next_cursor"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["ticks", b"ticks"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_next_cursor", b"_next_cursor", "from_time_msc", b"from_time_msc", "next_cursor", b"next_cursor", "symbol", b"symbol", "ticks", b"ticks", "to_time_msc", b"to_time_msc"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    def WhichOneof(self, oneof_group: _Never) -> None: ...
+    _WhichOneofReturnType__next_cursor: _TypeAlias = _typing.Literal["next_cursor"]  # noqa: Y015
+    _WhichOneofArgType__next_cursor: _TypeAlias = _typing.Literal["_next_cursor", b"_next_cursor"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__next_cursor) -> _WhichOneofReturnType__next_cursor | None: ...
 
 Global___ListTicksResponse: _TypeAlias = ListTicksResponse  # noqa: Y015
 

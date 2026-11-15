@@ -131,6 +131,22 @@ class ServerWallClockTerminal:
             for bar in self._inner.copy_bars(symbol, timeframe, start_pos, count)
         )
 
+    def copy_bars_range(
+        self, symbol: str, timeframe: Timeframe, date_from_epoch: int, date_to_epoch: int
+    ) -> tuple[Bar, ...]:
+        bars = self._inner.copy_bars_range(
+            symbol,
+            timeframe,
+            self._clock.to_wall_seconds(date_from_epoch),
+            self._clock.to_wall_seconds(date_to_epoch),
+        )
+        return tuple(
+            dataclasses.replace(
+                bar, time=self._clock.to_utc_seconds(bar.time), source_time=bar.time
+            )
+            for bar in bars
+        )
+
     def copy_ticks(self, symbol: str, date_from_msc: int, count: int) -> tuple[Tick, ...]:
         wall_from = self._clock.to_wall_msc(date_from_msc)
         return tuple(self._tick(tick) for tick in self._inner.copy_ticks(symbol, wall_from, count))

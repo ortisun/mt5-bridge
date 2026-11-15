@@ -2,16 +2,35 @@
 
 from mt5_bridge.api.errors import SYMBOL_NOT_FOUND, ProblemError
 from mt5_bridge.api.grpc_api import convert
-from mt5_bridge.api.grpc_api.calls import Service, rpc
+from mt5_bridge.api.grpc_api.calls import Service, invalid_value, rpc
 from mt5_bridge.api.grpc_api.generated import mt5_bridge_pb2 as pb
 from mt5_bridge.api.grpc_api.generated import mt5_bridge_pb2_grpc as pb_grpc
 from mt5_bridge.api.grpc_api.telemetry import Context
 from mt5_bridge.api.run_on_worker import run_on_worker
 from mt5_bridge.core.clock_drift import within_threshold
+from mt5_bridge.core.history_paging import (
+    InvalidRangeError,
+    plan_bar_pages,
+    read_bar_page,
+    read_tick_page,
+    start_tick_page,
+)
 from mt5_bridge.core.trading_phase import classify_trading_phase
 from mt5_bridge.core.worker import CommandPriority
+from mt5_bridge.mt5.models import Bar
 
-DEFAULT_COUNT = 100
+
+def _bar(bar: Bar) -> pb.Bar:
+    return pb.Bar(
+        symbol=bar.symbol,
+        timeframe=convert.TIMEFRAME.to_pb(bar.timeframe),
+        time=bar.time,
+        open=str(bar.open),
+        high=str(bar.high),
+        low=str(bar.low),
+        close=str(bar.close),
+        volume=str(bar.volume),
+    )
 
 
 class MarketDataService(Service, pb_grpc.MarketDataServicer):
@@ -130,28 +149,30 @@ class MarketDataService(Service, pb_grpc.MarketDataServicer):
         state = self.state
         symbol = request.symbol
         timeframe = convert.TIMEFRAME.from_pb(request.timeframe, field="timeframe")
-        count = request.count if request.HasField("count") else DEFAULT_COUNT
-        # start_pos=1: never even ask the terminal for the still-forming bar (rule 28).
+        page = request.page if request.HasField("page") else 1
+        try:
+            plan = plan_bar_pages(
+                timeframe=timeframe,
+                from_epoch=request.from_epoch,
+                to_epoch=request.to_epoch,
+            )
+            plan.window(page)
+        except InvalidRangeError as error:
+            raise invalid_value(error.field, error.detail) from error
         bars = await run_on_worker(
             state.worker,
             CommandPriority.MARKET_POLL,
-            lambda c: c.copy_bars(symbol, timeframe, 1, count),
+            lambda c: read_bar_page(c, symbol, timeframe, plan, page),
         )
         return pb.ListBarsResponse(
-            bars=[
-                pb.Bar(
-                    symbol=b.symbol,
-                    timeframe=convert.TIMEFRAME.to_pb(b.timeframe),
-                    time=b.time,
-                    open=str(b.open),
-                    high=str(b.high),
-                    low=str(b.low),
-                    close=str(b.close),
-                    volume=str(b.volume),
-                )
-                for b in bars
-                if b.is_closed  # defensive second check, never trust the source alone
-            ]
+            symbol=symbol,
+            timeframe=request.timeframe,
+            from_epoch=request.from_epoch,
+            to_epoch=request.to_epoch,
+            page=page,
+            total_pages=plan.total_pages,
+            next_page=page + 1 if page < plan.total_pages else None,
+            bars=[_bar(b) for b in bars],
         )
 
     @rpc
@@ -171,20 +192,33 @@ class MarketDataService(Service, pb_grpc.MarketDataServicer):
     ) -> pb.ListTicksResponse:
         state = self.state
         symbol = request.symbol
-        count = request.count if request.HasField("count") else DEFAULT_COUNT
-        # An absent from_time_msc is a recent window, not epoch 0: the bridge
-        # keeps no long-term tick history (§114 "Role of Bridge Data").
-        from_time_msc = (
-            request.from_time_msc
-            if request.HasField("from_time_msc")
-            else state.clock.now_ms() - state.settings.ticks_default_lookback_seconds * 1000
-        )
-        ticks = await run_on_worker(
+        from_time_msc, to_time_msc = request.from_time_msc, request.to_time_msc
+        try:
+            position = start_tick_page(
+                from_time_msc=from_time_msc,
+                to_time_msc=to_time_msc,
+                cursor=request.cursor if request.HasField("cursor") else None,
+            )
+        except InvalidRangeError as error:
+            raise invalid_value(error.field, error.detail) from error
+        page = await run_on_worker(
             state.worker,
             CommandPriority.MARKET_POLL,
-            lambda c: c.copy_ticks(symbol, from_time_msc, count),
+            lambda c: read_tick_page(
+                c,
+                symbol,
+                from_time_msc=from_time_msc,
+                to_time_msc=to_time_msc,
+                position=position,
+            ),
         )
-        return pb.ListTicksResponse(ticks=[convert.tick(t) for t in ticks])
+        return pb.ListTicksResponse(
+            symbol=symbol,
+            from_time_msc=from_time_msc,
+            to_time_msc=to_time_msc,
+            next_cursor=None if page.next_cursor is None else page.next_cursor.encode(),
+            ticks=[convert.tick(t) for t in page.ticks],
+        )
 
     @rpc
     async def GetBook(self, request: pb.GetBookRequest, context: Context) -> pb.GetBookResponse:

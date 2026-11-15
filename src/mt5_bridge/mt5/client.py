@@ -72,7 +72,22 @@ class Mt5Client(Protocol):
         rule 28) — and must still check ``Bar.is_closed`` themselves."""
         ...
 
-    def copy_ticks(self, symbol: str, date_from_msc: int, count: int) -> tuple[Tick, ...]: ...
+    def copy_bars_range(
+        self, symbol: str, timeframe: Timeframe, date_from_epoch: int, date_to_epoch: int
+    ) -> tuple[Bar, ...]:
+        """Every bar with ``date_from_epoch <= open time < date_to_epoch``,
+        oldest first. The still-forming bar is included when the range reaches
+        it; callers check ``Bar.is_closed`` (plan rule 28). The terminal bounds
+        nothing here: the caller keeps the range small
+        (``core/history_paging.py``)."""
+        ...
+
+    def copy_ticks(self, symbol: str, date_from_msc: int, count: int) -> tuple[Tick, ...]:
+        """Up to ``count`` ticks from ``date_from_msc`` on, oldest first. The
+        terminal takes the start in whole seconds: with a ``date_from_msc``
+        that is not a whole second, ticks of that second before it may be
+        returned too."""
+        ...
 
     def order_book(self, symbol: str) -> tuple[BookLevel, ...] | None: ...
 

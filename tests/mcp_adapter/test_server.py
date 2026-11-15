@@ -113,12 +113,13 @@ class TestReading:
         async with agent() as client:
             symbol = await client.call_tool("get_symbol", {"symbol": PETR4})
             bars = await client.call_tool(
-                "get_bars", {"symbol": PETR4, "timeframe": "M1", "count": 5}
+                "get_bars",
+                {"symbol": PETR4, "timeframe": "M1", "from_epoch": 0, "to_epoch": 3600},
             )
 
         assert payload(symbol)["name"] == PETR4
         assert bars.is_error is False
-        assert isinstance(payload(bars), list)
+        assert (payload(bars)["total_pages"], payload(bars)["bars"]) == (1, [])
 
 
 class TestErrors:
@@ -140,7 +141,10 @@ class TestErrors:
 
     async def test_an_invalid_argument_is_located_by_the_errors_member(self) -> None:
         async with agent() as client:
-            result = await client.call_tool("get_bars", {"symbol": PETR4, "timeframe": "Z9"})
+            result = await client.call_tool(
+                "get_bars",
+                {"symbol": PETR4, "timeframe": "Z9", "from_epoch": 0, "to_epoch": 3600},
+            )
 
         assert result.is_error is True
         problem = payload(result)

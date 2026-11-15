@@ -13,8 +13,10 @@ the terminal and sends the orders it is told to send.
 - `get_symbol` gives the rules of one instrument: `tick_size`, `volume_step`,
   `volume_min`, `volume_max`, the allowed filling modes and the trading phase.
   Read it before building an order.
-- `get_bars` returns closed bars only, oldest first. `get_ticks` without
-  `from_time_msc` returns a recent window, not the whole history.
+- `get_bars` and `get_ticks` take a date range, never a quantity. Bars are
+  closed bars only, oldest first: read `page` 1, then every page up to
+  `total_pages`; an empty page is not the end. Ticks: repeat the call with
+  `cursor` set to the last `next_cursor` until it is null.
 - `list_open_orders` and `get_order` show the bridge's journal.
   `list_history_orders` and `list_history_deals` show the terminal's history.
 

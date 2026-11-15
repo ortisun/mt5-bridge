@@ -37,10 +37,14 @@ service MarketData {
   rpc GetAccount(GetAccountRequest) returns (Account);
   rpc ListSymbols(ListSymbolsRequest) returns (ListSymbolsResponse);
   rpc GetSymbol(GetSymbolRequest) returns (SymbolDetail);
-  // Closed bars only, oldest first; the still-forming bar is never returned.
+  // The closed bars of a date range, one page at a time; the still-forming
+  // bar is never returned. `total_pages` follows from the dates and the
+  // timeframe alone; a page over a weekend or a holiday is empty.
   rpc ListBars(ListBarsRequest) returns (ListBarsResponse);
   // The terminal's current quote; `tick` is absent when it has none.
   rpc GetLatestTick(GetLatestTickRequest) returns (GetLatestTickResponse);
+  // The ticks of a date range, one page at a time: repeat the request with
+  // `next_cursor` until the response has none.
   rpc ListTicks(ListTicksRequest) returns (ListTicksResponse);
   // Empty when the terminal has no depth for the symbol.
   rpc GetBook(GetBookRequest) returns (GetBookResponse);
@@ -322,13 +326,6 @@ message SymbolDetail {
   TradingPhase trading_phase = 11;
 }
 
-message ListBarsRequest {
-  string symbol = 1;
-  Timeframe timeframe = 2;
-  // 100 when absent.
-  optional int32 count = 3;
-}
-
 message Bar {
   string symbol = 1;
   Timeframe timeframe = 2;
@@ -341,8 +338,28 @@ message Bar {
   string volume = 8;
 }
 
+message ListBarsRequest {
+  string symbol = 1;
+  Timeframe timeframe = 2;
+  // Start of the range, inclusive, epoch seconds.
+  int64 from_epoch = 3;
+  // End of the range, exclusive, epoch seconds.
+  int64 to_epoch = 4;
+  // 1 when absent.
+  optional int32 page = 5;
+}
+
 message ListBarsResponse {
-  repeated Bar bars = 1;
+  string symbol = 1;
+  Timeframe timeframe = 2;
+  int64 from_epoch = 3;
+  int64 to_epoch = 4;
+  int32 page = 5;
+  // How many pages the range has; the same on every page.
+  int32 total_pages = 6;
+  // Absent on the last page.
+  optional int32 next_page = 7;
+  repeated Bar bars = 8;
 }
 
 message GetLatestTickRequest {
@@ -365,15 +382,21 @@ message GetLatestTickResponse {
 
 message ListTicksRequest {
   string symbol = 1;
-  // 100 when absent.
-  optional int32 count = 2;
-  // Epoch milliseconds. A recent window when absent; 0 pages from the oldest
-  // tick the terminal retains.
-  optional int64 from_time_msc = 3;
+  // Start of the range, inclusive, epoch milliseconds.
+  int64 from_time_msc = 2;
+  // End of the range, exclusive, epoch milliseconds.
+  int64 to_time_msc = 3;
+  // The `next_cursor` of the previous page; absent for the first page.
+  optional string cursor = 4;
 }
 
 message ListTicksResponse {
-  repeated Tick ticks = 1;
+  string symbol = 1;
+  int64 from_time_msc = 2;
+  int64 to_time_msc = 3;
+  // Absent when the range has been read to its end.
+  optional string next_cursor = 4;
+  repeated Tick ticks = 5;
 }
 
 message GetBookRequest {

@@ -115,6 +115,25 @@ class TickResponse(ApiModel):
     volume: DecimalStr
 
 
+class BarsPageResponse(ApiModel):
+    symbol: str
+    timeframe: str
+    from_epoch: int
+    to_epoch: int
+    page: int
+    total_pages: int
+    next_page: int | None
+    bars: list[BarResponse]
+
+
+class TicksPageResponse(ApiModel):
+    symbol: str
+    from_time_msc: int
+    to_time_msc: int
+    next_cursor: str | None
+    ticks: list[TickResponse]
+
+
 class OrderResponse(ApiModel):
     client_order_id: str
     symbol: str

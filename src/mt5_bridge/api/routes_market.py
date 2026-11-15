@@ -1,26 +1,71 @@
-"""GET /v1/health, /terminal, /account, /symbols, /bars, /ticks, /book."""
+"""GET /v1/health, /terminal, /account, /symbols, /bars, /ticks, /book.
+
+``/bars`` and ``/ticks`` take a date range, never a quantity, and answer it
+in pages (``core/history_paging.py``).
+"""
 
 from fastapi import APIRouter, Request
 
 from mt5_bridge.api.app_state import get_state
-from mt5_bridge.api.errors import SYMBOL_NOT_FOUND, ProblemError
+from mt5_bridge.api.errors import SYMBOL_NOT_FOUND, VALIDATION_ERROR, ProblemError
 from mt5_bridge.api.run_on_worker import run_on_worker
 from mt5_bridge.api.schemas import (
     AccountResponse,
     BarResponse,
+    BarsPageResponse,
     BookLevelResponse,
     HealthResponse,
     SymbolDetail,
     SymbolSummary,
     TerminalResponse,
     TickResponse,
+    TicksPageResponse,
 )
 from mt5_bridge.core.clock_drift import within_threshold
+from mt5_bridge.core.history_paging import (
+    InvalidRangeError,
+    plan_bar_pages,
+    read_bar_page,
+    read_tick_page,
+    start_tick_page,
+)
 from mt5_bridge.core.trading_phase import classify_trading_phase
 from mt5_bridge.core.worker import CommandPriority
-from mt5_bridge.mt5.models import Timeframe
+from mt5_bridge.mt5.models import Bar, Tick, Timeframe
 
 router = APIRouter(prefix="/v1", tags=["market"])
+
+
+def _bar_response(bar: Bar) -> BarResponse:
+    return BarResponse(
+        symbol=bar.symbol,
+        timeframe=bar.timeframe.value,
+        time=bar.time,
+        open=bar.open,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
+        volume=bar.volume,
+    )
+
+
+def _tick_response(tick: Tick) -> TickResponse:
+    return TickResponse(
+        symbol=tick.symbol,
+        time_msc=tick.time_msc,
+        bid=tick.bid,
+        ask=tick.ask,
+        last=tick.last,
+        volume=tick.volume,
+    )
+
+
+def _invalid_query(error: InvalidRangeError) -> ProblemError:
+    return ProblemError(
+        VALIDATION_ERROR,
+        str(error),
+        errors=[{"in": "query", "parameter": error.field, "detail": error.detail}],
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -130,35 +175,37 @@ async def symbol_detail(symbol: str, *, request: Request) -> SymbolDetail:
     )
 
 
-@router.get("/bars", response_model=list[BarResponse])
+@router.get("/bars", response_model=BarsPageResponse)
 async def bars(
     *,
     request: Request,
     symbol: str,
     timeframe: Timeframe,
-    count: int = 100,
-) -> list[BarResponse]:
+    from_epoch: int,
+    to_epoch: int,
+    page: int = 1,
+) -> BarsPageResponse:
     state = get_state(request)
-    # start_pos=1: never even ask the client for the still-forming bar (rule 28).
-    raw_bars = await run_on_worker(
+    try:
+        plan = plan_bar_pages(timeframe=timeframe, from_epoch=from_epoch, to_epoch=to_epoch)
+        plan.window(page)
+    except InvalidRangeError as error:
+        raise _invalid_query(error) from error
+    page_bars = await run_on_worker(
         state.worker,
         CommandPriority.MARKET_POLL,
-        lambda c: c.copy_bars(symbol, timeframe, 1, count),
+        lambda c: read_bar_page(c, symbol, timeframe, plan, page),
     )
-    return [
-        BarResponse(
-            symbol=b.symbol,
-            timeframe=b.timeframe.value,
-            time=b.time,
-            open=b.open,
-            high=b.high,
-            low=b.low,
-            close=b.close,
-            volume=b.volume,
-        )
-        for b in raw_bars
-        if b.is_closed  # defensive second check, never trust the source alone
-    ]
+    return BarsPageResponse(
+        symbol=symbol,
+        timeframe=timeframe.value,
+        from_epoch=from_epoch,
+        to_epoch=to_epoch,
+        page=page,
+        total_pages=plan.total_pages,
+        next_page=page + 1 if page < plan.total_pages else None,
+        bars=[_bar_response(b) for b in page_bars],
+    )
 
 
 @router.get("/ticks/latest", response_model=list[TickResponse])
@@ -171,48 +218,44 @@ async def latest_tick(*, request: Request, symbol: str) -> list[TickResponse]:
     )
     if tick is None:
         return []
-    return [
-        TickResponse(
-            symbol=tick.symbol,
-            time_msc=tick.time_msc,
-            bid=tick.bid,
-            ask=tick.ask,
-            last=tick.last,
-            volume=tick.volume,
-        )
-    ]
+    return [_tick_response(tick)]
 
 
-@router.get("/ticks", response_model=list[TickResponse])
+@router.get("/ticks", response_model=TicksPageResponse)
 async def ticks(
     *,
     request: Request,
     symbol: str,
-    count: int = 100,
-    from_time_msc: int | None = None,
-) -> list[TickResponse]:
+    from_time_msc: int,
+    to_time_msc: int,
+    cursor: str | None = None,
+) -> TicksPageResponse:
     state = get_state(request)
-    # Omitting from_time_msc defaults to a recent window, not epoch 0 — the
-    # oldest retained tick is rarely what a caller wants, and this bridge
-    # keeps no long-term tick history (§114 "Role of Bridge Data"). Pass an
-    # explicit from_time_msc (0 to page from the very oldest retained tick)
-    # to look further back; count still caps the page either way.
-    resolved_from_time_msc = (
-        from_time_msc
-        if from_time_msc is not None
-        else state.clock.now_ms() - state.settings.ticks_default_lookback_seconds * 1000
-    )
-    raw_ticks = await run_on_worker(
+    try:
+        position = start_tick_page(
+            from_time_msc=from_time_msc, to_time_msc=to_time_msc, cursor=cursor
+        )
+    except InvalidRangeError as error:
+        raise _invalid_query(error) from error
+    tick_page = await run_on_worker(
         state.worker,
         CommandPriority.MARKET_POLL,
-        lambda c: c.copy_ticks(symbol, resolved_from_time_msc, count),
+        lambda c: read_tick_page(
+            c,
+            symbol,
+            from_time_msc=from_time_msc,
+            to_time_msc=to_time_msc,
+            position=position,
+        ),
     )
-    return [
-        TickResponse(
-            symbol=t.symbol, time_msc=t.time_msc, bid=t.bid, ask=t.ask, last=t.last, volume=t.volume
-        )
-        for t in raw_ticks
-    ]
+    next_cursor = tick_page.next_cursor
+    return TicksPageResponse(
+        symbol=symbol,
+        from_time_msc=from_time_msc,
+        to_time_msc=to_time_msc,
+        next_cursor=None if next_cursor is None else next_cursor.encode(),
+        ticks=[_tick_response(t) for t in tick_page.ticks],
+    )
 
 
 @router.get("/book/{symbol}", response_model=list[BookLevelResponse])
