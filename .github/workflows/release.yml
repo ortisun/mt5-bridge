@@ -50,6 +50,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "$GITHUB_REF_NAME"
-          --title "mt5-bridge $GITHUB_REF_NAME"
+          --title "$GITHUB_REF_NAME"
           --notes-file dist/release-notes.md
           dist/mt5-bridge-app.zip dist/*.whl dist/*.tar.gz

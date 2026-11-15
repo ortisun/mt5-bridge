@@ -190,7 +190,7 @@ def notes(base: str | None) -> str:
             f"Contract version **{now}**, unchanged since {base}. "
             "Clients need no change to their copy of the contract."
         )
-    return f"# mt5-bridge v{version}\n\n## Contract\n\n{contract}\n\n## Changes\n\n{changelog_section(version)}\n"
+    return f"# v{version}\n\n## Contract\n\n{contract}\n\n## Changes\n\n{changelog_section(version)}\n"
 
 
 def main() -> int:
