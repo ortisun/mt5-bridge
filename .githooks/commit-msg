@@ -1,0 +1,10 @@
+#!/bin/sh
+# Checks a commit message when it is made. Enable once per clone with `make hooks`.
+set -e
+
+if grep -qi '^co-authored-by:' "$1"; then
+  echo "commit-msg: remove the Co-authored-by trailer (CONTRIBUTING.md)." >&2
+  exit 1
+fi
+
+uv run --locked cz check --commit-msg-file "$1"

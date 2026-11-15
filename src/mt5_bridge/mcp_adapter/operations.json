@@ -1,0 +1,784 @@
+{
+  "contract_version": "1.0.0",
+  "operations": [
+    {
+      "name": "get_health",
+      "operation_id": "getHealth",
+      "method": "GET",
+      "path": "/v1/health",
+      "description": "Bridge, terminal and broker-connection state; polling latencies. Call this first: it tells whether the terminal is connected to the broker.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "get_terminal",
+      "operation_id": "getTerminal",
+      "method": "GET",
+      "path": "/v1/terminal",
+      "description": "Build, broker, server, algo-trading enabled, observed time contract.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "get_account",
+      "operation_id": "getAccount",
+      "method": "GET",
+      "path": "/v1/account",
+      "description": "Balance, equity, margin, position-accounting mode, currency.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "list_symbols",
+      "operation_id": "listSymbols",
+      "method": "GET",
+      "path": "/v1/symbols",
+      "description": "Available symbols.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [
+        "group"
+      ],
+      "body_params": []
+    },
+    {
+      "name": "get_symbol",
+      "operation_id": "getSymbol",
+      "method": "GET",
+      "path": "/v1/symbols/{symbol}",
+      "description": "Tick size, step, min/max volume, filling modes, sessions, trading status. Read this before building an order: prices must be multiples of tick_size and volumes multiples of volume_step within volume_min and volume_max.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "symbol"
+      ],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "get_bars",
+      "operation_id": "getBars",
+      "method": "GET",
+      "path": "/v1/bars",
+      "description": "Closed bars only. The bar still forming is never returned.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "timeframe": {
+            "type": "string",
+            "enum": [
+              "M1",
+              "M5",
+              "M15",
+              "M30",
+              "H1",
+              "H4",
+              "D1",
+              "W1",
+              "MN1"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 100
+          }
+        },
+        "required": [
+          "symbol",
+          "timeframe"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [
+        "symbol",
+        "timeframe",
+        "count"
+      ],
+      "body_params": []
+    },
+    {
+      "name": "get_latest_tick",
+      "operation_id": "getLatestTick",
+      "method": "GET",
+      "path": "/v1/ticks/latest",
+      "description": "The terminal's current quote for one symbol. The terminal's current tick (symbol_info_tick) as a zero- or one-element array: what a stream client reloads after a gap on the ticks channel. Empty when the terminal has no quote for the symbol.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [
+        "symbol"
+      ],
+      "body_params": []
+    },
+    {
+      "name": "get_ticks",
+      "operation_id": "getTicks",
+      "method": "GET",
+      "path": "/v1/ticks",
+      "description": "Recent ticks. Ticks matching symbol with time_msc >= from_time_msc, oldest first, capped at count. Omitting from_time_msc does not default to epoch 0 (the oldest retained tick): it defaults to a recent window ending now — MT5_BRIDGE_TICKS_DEFAULT_LOOKBACK_SECONDS, 300 (5 minutes) by default — because this bridge keeps no long-term tick history and a caller almost always wants recent ticks. Pass from_time_msc=0 explicitly to page from the very oldest retained tick.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "from_time_msc": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Lower bound, milliseconds since the Unix epoch. Omit to use the server's default lookback window (see the operation description) rather than the oldest retained tick."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 100
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [
+        "symbol",
+        "from_time_msc",
+        "count"
+      ],
+      "body_params": []
+    },
+    {
+      "name": "get_book",
+      "operation_id": "getBook",
+      "method": "GET",
+      "path": "/v1/book/{symbol}",
+      "description": "Depth, if supplied by the broker.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "symbol"
+      ],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "list_open_orders",
+      "operation_id": "listOpenOrders",
+      "method": "GET",
+      "path": "/v1/orders",
+      "description": "Open orders (bridge journal view). This is the bridge's own journal; an order sent outside the bridge is not here.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "submit_order",
+      "operation_id": "submitOrder",
+      "method": "POST",
+      "path": "/v1/orders",
+      "description": "Submit order — idempotent by client_order_id. Sends a real order to the broker account. Choose a fresh, unique client_order_id; repeating the call with the same id and the same payload returns the first order and never sends a second one. A state of UNKNOWN means the bridge could not confirm the outcome: do not resubmit under a new id, read the order with get_order and tell the operator. price is required for LIMIT, STOP and STOP_LIMIT orders.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "MARKET",
+              "LIMIT",
+              "STOP",
+              "STOP_LIMIT"
+            ]
+          },
+          "volume": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "time_in_force": {
+            "type": "string",
+            "enum": [
+              "DAY",
+              "GTC",
+              "IOC",
+              "FOK",
+              "GTD"
+            ]
+          },
+          "price": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "stop_loss": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "take_profit": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "expiration": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client_order_id",
+          "symbol",
+          "side",
+          "type",
+          "volume",
+          "time_in_force"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": [
+        "client_order_id",
+        "symbol",
+        "side",
+        "type",
+        "volume",
+        "time_in_force",
+        "price",
+        "stop_loss",
+        "take_profit",
+        "expiration"
+      ]
+    },
+    {
+      "name": "check_order",
+      "operation_id": "checkOrder",
+      "method": "POST",
+      "path": "/v1/orders/check",
+      "description": "Validation (order_check) without sending. Asks the terminal whether the order would be accepted. Nothing is sent to the market.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "MARKET",
+              "LIMIT",
+              "STOP",
+              "STOP_LIMIT"
+            ]
+          },
+          "volume": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "time_in_force": {
+            "type": "string",
+            "enum": [
+              "DAY",
+              "GTC",
+              "IOC",
+              "FOK",
+              "GTD"
+            ]
+          },
+          "price": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "stop_loss": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "take_profit": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "expiration": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client_order_id",
+          "symbol",
+          "side",
+          "type",
+          "volume",
+          "time_in_force"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": [
+        "client_order_id",
+        "symbol",
+        "side",
+        "type",
+        "volume",
+        "time_in_force",
+        "price",
+        "stop_loss",
+        "take_profit",
+        "expiration"
+      ]
+    },
+    {
+      "name": "get_order",
+      "operation_id": "getOrder",
+      "method": "GET",
+      "path": "/v1/orders/{client_order_id}",
+      "description": "Consolidated state (journal + terminal).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_order_id"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "client_order_id"
+      ],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "amend_order",
+      "operation_id": "amendOrder",
+      "method": "PATCH",
+      "path": "/v1/orders/{client_order_id}",
+      "description": "Amend supported price/protections/expiry; does not change volume/type. Send only the fields that change.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "stop_loss": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "take_profit": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "expiration": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client_order_id"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "client_order_id"
+      ],
+      "query_params": [],
+      "body_params": [
+        "price",
+        "stop_loss",
+        "take_profit",
+        "expiration"
+      ]
+    },
+    {
+      "name": "cancel_order",
+      "operation_id": "cancelOrder",
+      "method": "DELETE",
+      "path": "/v1/orders/{client_order_id}",
+      "description": "Cancel. The returned state can be FILLED when the cancellation lost the race.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_order_id"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "client_order_id"
+      ],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "replace_order",
+      "operation_id": "replaceOrder",
+      "method": "POST",
+      "path": "/v1/orders/{client_order_id}/replace",
+      "description": "Explicit cancel-replace with operation_id and new_client_order_id. Idempotent by operation_id: repeating the same request returns the stored outcome; a different payload under the same operation_id is a conflict (mirrors client_order_id idempotency). Choose a fresh operation_id; repeating the call with the same operation_id returns the stored outcome. Read the outcome field: both orders can end open, or neither.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "new_client_order_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "MARKET",
+              "LIMIT",
+              "STOP",
+              "STOP_LIMIT"
+            ]
+          },
+          "volume": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "time_in_force": {
+            "type": "string",
+            "enum": [
+              "DAY",
+              "GTC",
+              "IOC",
+              "FOK",
+              "GTD"
+            ]
+          },
+          "price": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "stop_loss": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "take_profit": {
+            "type": "string",
+            "description": "A base-10 decimal amount, always transmitted as a string (never a bare JSON number) so a client's JSON parser cannot round a price or quantity through float.",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "expiration": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client_order_id",
+          "operation_id",
+          "new_client_order_id",
+          "symbol",
+          "side",
+          "type",
+          "volume",
+          "time_in_force"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "client_order_id"
+      ],
+      "query_params": [],
+      "body_params": [
+        "operation_id",
+        "new_client_order_id",
+        "symbol",
+        "side",
+        "type",
+        "volume",
+        "time_in_force",
+        "price",
+        "stop_loss",
+        "take_profit",
+        "expiration"
+      ]
+    },
+    {
+      "name": "reconcile_order",
+      "operation_id": "reconcileOrder",
+      "method": "POST",
+      "path": "/v1/orders/{client_order_id}/reconcile",
+      "description": "Re-examine one UNKNOWN order against the terminal. Audited. A known ticket takes the terminal's state; an entry without a ticket resolves to a unique magic+tag candidate, or to REJECTED only when the terminal holds no order or deal with this bridge's magic in a window covering the entry. Anything else stays UNKNOWN and keeps its symbol blocked. For an operator resolving an order stuck in UNKNOWN.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "client_order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_order_id"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [
+        "client_order_id"
+      ],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "list_positions",
+      "operation_id": "listPositions",
+      "method": "GET",
+      "path": "/v1/positions",
+      "description": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "list_history_orders",
+      "operation_id": "listHistoryOrders",
+      "method": "GET",
+      "path": "/v1/history/orders",
+      "description": "from_epoch and to_epoch bound the search window.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "from_epoch": {
+            "type": "integer"
+          },
+          "to_epoch": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_epoch",
+          "to_epoch"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [
+        "from_epoch",
+        "to_epoch"
+      ],
+      "body_params": []
+    },
+    {
+      "name": "list_history_deals",
+      "operation_id": "listHistoryDeals",
+      "method": "GET",
+      "path": "/v1/history/deals",
+      "description": "from_epoch and to_epoch bound the search window.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "from_epoch": {
+            "type": "integer"
+          },
+          "to_epoch": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_epoch",
+          "to_epoch"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [
+        "from_epoch",
+        "to_epoch"
+      ],
+      "body_params": []
+    },
+    {
+      "name": "activate_kill_switch",
+      "operation_id": "activateKillSwitch",
+      "method": "POST",
+      "path": "/v1/kill-switch",
+      "description": "{action: HALT_NEW_ORDERS | CANCEL_ALL | FLATTEN} Emergency stop, and it only escalates: HALT_NEW_ORDERS blocks new orders, CANCEL_ALL also cancels every open order, FLATTEN also closes every position at market. Only rearm_kill_switch returns it to NORMAL.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "HALT_NEW_ORDERS",
+              "CANCEL_ALL",
+              "FLATTEN"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": [
+        "action"
+      ]
+    },
+    {
+      "name": "rearm_kill_switch",
+      "operation_id": "rearmKillSwitch",
+      "method": "DELETE",
+      "path": "/v1/kill-switch",
+      "description": "Rearm — return the kill switch to NORMAL. Orders are accepted again afterwards. An operator's decision: do not call it unless the user asked for exactly this.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    },
+    {
+      "name": "heartbeat",
+      "operation_id": "heartbeat",
+      "method": "POST",
+      "path": "/v1/heartbeat",
+      "description": "Feed the dead-man switch. Every call (re)establishes the lease. Once a lease exists and no heartbeat arrives within the timeout, the bridge cancels all open orders. The first heartbeat arms the dead-man switch: from then on, open orders are canceled when heartbeats stop for longer than the bridge's timeout. Do not call it unless you will keep calling it.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "path_params": [],
+      "query_params": [],
+      "body_params": []
+    }
+  ]
+}

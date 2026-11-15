@@ -1,0 +1,33 @@
+# MT5 bridge
+
+Rules for this repository. The contract is in `contracts/mt5_bridge/`, the
+runbook is [docs/runbook.md](docs/runbook.md).
+
+- The bridge is a standalone uv project (`mt5_bridge`, its own `.venv` and `uv.lock`). It imports no
+  client project and no client project imports it; clients use the contract files only. Run its
+  commands from the repository root: `make check` (lint, format, types, import rule, tests, build).
+- Commits follow Conventional Commits and never carry a `Co-authored-by` trailer; branches follow
+  Git Flow. The rules are in [CONTRIBUTING.md](CONTRIBUTING.md); releases, tags and release notes
+  follow [docs/release.md](docs/release.md) and are the owner's to make.
+- `MetaTrader5` is imported only in `src/mt5_bridge/mt5/real_client.py` (import-linter enforces it);
+  every test runs against the deterministic fake terminal in `mt5/fake_client.py`. The real client
+  cannot be tested here: no Windows host or terminal is available outside the guest.
+- An API change edits `contracts/mt5_bridge/` in the same commit as the server code; the tests in
+  `tests/contracts/` must keep passing. A change to `mt5_bridge.proto` also needs `make proto`,
+  which rewrites `src/mt5_bridge/api/grpc_api/generated/`; never edit that directory by hand.
+- `src/mt5_bridge/mcp_adapter/` is the MCP server for AI agents ([docs/mcp.md](docs/mcp.md)). It is
+  a client: it calls the bridge over HTTP and imports nothing from `api`, `core` or `mt5`
+  (import-linter enforces it). Its tools are generated from the contract; after a contract change
+  run `make mcp-operations` and commit `operations.json` with it. It must not gain trading logic
+  or retries of orders.
+- Do not change UTM, start a terminal or place live credentials in code or tests.
+- Credentials come from environment variables set on the machine (`MT5_BRIDGE_LOGIN`,
+  `MT5_BRIDGE_PASSWORD`, `MT5_BRIDGE_SERVER`), never from a file in this repository. The API has
+  no client authentication: access control is the network's job (bind address, guest firewall).
+  Limits, the kill switch and the dead-man switch stay in
+  `core/`, outside any client.
+- Log lines, audit records and stream messages are OCSF events. Class ids, activity ids and
+  attribute names come only from `src/mt5_bridge/core/ocsf.py`; the mapping is in
+  [docs/ocsf.md](docs/ocsf.md), and `tests/contracts/` validates what is emitted.
+- Comments cite the design rules by number (`plan §N`, `ADR-NNN`, `rule N`); see
+  [docs/design-rules.md](docs/design-rules.md) for what each one says.

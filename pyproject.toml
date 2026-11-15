@@ -1,0 +1,143 @@
+[project]
+name = "mt5-bridge"
+version = "1.0.0"
+description = "Isolated gateway for a Windows MetaTrader 5 terminal."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.141.1",
+    "pydantic==2.13.5",
+    "uvicorn==0.54.0",
+    "websockets==17.1",
+    "MetaTrader5==5.0.6180; sys_platform == 'win32'",
+    "tzdata==2026.4; sys_platform == 'win32'",
+    "opentelemetry-api==1.45.1",
+    "opentelemetry-sdk==1.45.1",
+    "opentelemetry-exporter-otlp-proto-http==1.45.0",
+    "opentelemetry-exporter-prometheus==0.66b0",
+    "grpcio==1.85.1",
+    "protobuf==7.36.2",
+]
+
+[project.optional-dependencies]
+mcp = [
+    "httpx2==2.16.0",
+    "mcp==2.3.0",
+]
+
+[project.scripts]
+mt5-bridge-mcp = "mt5_bridge.mcp_adapter.__main__:main"
+
+[build-system]
+requires = ["uv_build==0.12.11"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+python_files = ["test_*.py", "it_*.py"]
+addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers", "-m", "not slow and not integration"]
+markers = [
+    "integration: set automatically on every it_*.py item (out-of-process infrastructure); never applied by hand; excluded by default, run with -m integration",
+    "slow: measured call time of at least 20 seconds; excluded by default, run with -m slow",
+]
+asyncio_mode = "strict"
+
+[tool.pyright]
+include = ["src", "tests", "tools"]
+# Generated from the .proto contract (make proto); its .pyi stubs still type its users.
+exclude = ["src/mt5_bridge/api/grpc_api/generated"]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
+
+[dependency-groups]
+dev = [
+    "mt5-bridge[mcp]",
+    "commitizen>=4.18.1,<5",
+    "grpcio-tools==1.85.1",
+    "httpx==0.28.1",
+    "import-linter>=2.9,<3",
+    "jsonschema==4.26.0",
+    "mypy-protobuf==5.1.0",
+    "pyright[nodejs]>=1.1.414,<2",
+    "pytest>=9,<10",
+    "pytest-asyncio==1.4.0",
+    "pytest-xdist==3.8.0",
+    "pyyaml==6.0.3",
+    "ruff>=0.16.8,<1",
+    "types-grpcio==1.85.0.20261028",
+    "types-protobuf==7.35.1.20260906",
+    "types-pyyaml==6.0.12.20260906",
+]
+
+[tool.importlinter]
+root_package = "mt5_bridge"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Only the real MT5 client imports the terminal library"
+type = "forbidden"
+source_modules = ["mt5_bridge"]
+forbidden_modules = ["MetaTrader5"]
+ignore_imports = ["mt5_bridge.mt5.real_client -> MetaTrader5"]
+# A graph without the authorized edge (an isolated fixture) must not fail the contract.
+unmatched_ignore_imports_alerting = "none"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["src/mt5_bridge/api/grpc_api/generated"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mt5_bridge"]
+known-local-folder = ["testkit"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# Conventional Commits, the version and the changelog (CONTRIBUTING.md).
+[tool.commitizen]
+name = "cz_conventional_commits"
+message_length_limit = 100
+version_scheme = "semver2"
+version_provider = "uv"
+tag_format = "v$version"
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+major_version_zero = true
+annotated_tag = true
+bump_message = "chore(version): v$new_version"
+changelog_incremental = true
+
+[[tool.importlinter.contracts]]
+name = "The MCP adapter is a client: it reaches the bridge only over HTTP"
+type = "forbidden"
+source_modules = ["mt5_bridge.mcp_adapter"]
+forbidden_modules = [
+    "mt5_bridge.api",
+    "mt5_bridge.core",
+    "mt5_bridge.mt5",
+    "mt5_bridge.main",
+    "mt5_bridge.settings",
+    "mt5_bridge.secrets",
+]
+
+[[tool.importlinter.contracts]]
+name = "The bridge service does not depend on the MCP adapter or the MCP SDK"
+type = "forbidden"
+source_modules = [
+    "mt5_bridge.api",
+    "mt5_bridge.core",
+    "mt5_bridge.mt5",
+    "mt5_bridge.main",
+    "mt5_bridge.settings",
+    "mt5_bridge.secrets",
+]
+forbidden_modules = ["mt5_bridge.mcp_adapter", "mcp"]

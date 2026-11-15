@@ -1,0 +1,744 @@
+// gRPC v1 contract for the MT5 bridge.
+//
+// The same operations as openapi.yaml and ws_messages.schema.json in this
+// directory, over gRPC. The three documents share one version number
+// (info.version in openapi.yaml).
+//
+// The API has no client authentication; a call needs no metadata. A call may
+// carry the W3C Trace Context entries `traceparent` and `tracestate`.
+//
+// Prices, volumes and money amounts are decimal strings, never floating
+// point numbers, exactly as in the REST contract.
+//
+// Errors: a failed call ends with a gRPC status and the trailing metadata
+// entry `mt5-bridge-problem-bin`, a serialized Problem. The problem types
+// are the ones of the REST API (docs/errors.md), each with one status:
+//
+//   NOT_FOUND           symbol-not-found, order-not-found
+//   ALREADY_EXISTS      idempotency-conflict
+//   FAILED_PRECONDITION order-state-conflict, unsupported-venue-capability
+//   RESOURCE_EXHAUSTED  payload-too-large
+//   INVALID_ARGUMENT    validation-error
+//   INTERNAL            internal-error
+//   UNAVAILABLE         worker-unavailable, terminal-unavailable,
+//                       clock-drift-exceeded
+syntax = "proto3";
+
+package mt5_bridge.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------- services
+
+// Terminal, account and market data; no call here changes state.
+service MarketData {
+  rpc GetHealth(GetHealthRequest) returns (Health);
+  rpc GetTerminal(GetTerminalRequest) returns (Terminal);
+  rpc GetAccount(GetAccountRequest) returns (Account);
+  rpc ListSymbols(ListSymbolsRequest) returns (ListSymbolsResponse);
+  rpc GetSymbol(GetSymbolRequest) returns (SymbolDetail);
+  // Closed bars only, oldest first; the still-forming bar is never returned.
+  rpc ListBars(ListBarsRequest) returns (ListBarsResponse);
+  // The terminal's current quote; `tick` is absent when it has none.
+  rpc GetLatestTick(GetLatestTickRequest) returns (GetLatestTickResponse);
+  rpc ListTicks(ListTicksRequest) returns (ListTicksResponse);
+  // Empty when the terminal has no depth for the symbol.
+  rpc GetBook(GetBookRequest) returns (GetBookResponse);
+}
+
+// Orders, positions, history, the kill switch and the dead-man heartbeat.
+service Trading {
+  rpc ListOpenOrders(ListOpenOrdersRequest) returns (ListOrdersResponse);
+  rpc GetOrder(GetOrderRequest) returns (Order);
+  rpc ListPositions(ListPositionsRequest) returns (ListPositionsResponse);
+  rpc ListHistoryOrders(HistoryRequest) returns (ListHistoryOrdersResponse);
+  rpc ListHistoryDeals(HistoryRequest) returns (ListHistoryDealsResponse);
+  // Every heartbeat renews the dead-man lease.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  rpc CheckOrder(OrderRequest) returns (OrderCheck);
+  // Idempotent on client_order_id: a repeat with the same payload returns the
+  // stored order with `replayed` set; another payload is ALREADY_EXISTS.
+  rpc SubmitOrder(OrderRequest) returns (SubmitOrderResponse);
+  rpc AmendOrder(AmendOrderRequest) returns (Order);
+  rpc ReplaceOrder(ReplaceOrderRequest) returns (ReplaceOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (Order);
+
+  rpc ActivateKillSwitch(ActivateKillSwitchRequest) returns (KillSwitchStatus);
+  rpc RearmKillSwitch(RearmKillSwitchRequest) returns (KillSwitchStatus);
+  // Re-examines one order in state UNKNOWN against the terminal.
+  rpc ReconcileOrder(ReconcileOrderRequest) returns (Order);
+}
+
+// The subscription stream: the gRPC form of the WebSocket endpoint /v1/stream.
+// `executions` is durable and resumable by sequence number; the other
+// channels are not, and after a gap the client reloads through the unary
+// calls. The call ends when the client cancels it; a client that stops
+// sending keeps receiving what it subscribed to.
+service Streaming {
+  rpc Stream(stream StreamRequest) returns (stream StreamEvent);
+}
+
+// ------------------------------------------------------------------- enums
+
+enum OrderSide {
+  ORDER_SIDE_UNSPECIFIED = 0;
+  ORDER_SIDE_BUY = 1;
+  ORDER_SIDE_SELL = 2;
+}
+
+enum OrderType {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_MARKET = 1;
+  ORDER_TYPE_LIMIT = 2;
+  ORDER_TYPE_STOP = 3;
+  ORDER_TYPE_STOP_LIMIT = 4;
+}
+
+enum TimeInForce {
+  TIME_IN_FORCE_UNSPECIFIED = 0;
+  TIME_IN_FORCE_DAY = 1;
+  TIME_IN_FORCE_GTC = 2;
+  TIME_IN_FORCE_IOC = 3;
+  TIME_IN_FORCE_FOK = 4;
+  TIME_IN_FORCE_GTD = 5;
+}
+
+enum FillingMode {
+  FILLING_MODE_UNSPECIFIED = 0;
+  FILLING_MODE_FOK = 1;
+  FILLING_MODE_IOC = 2;
+  FILLING_MODE_RETURN = 3;
+}
+
+enum PositionAccounting {
+  POSITION_ACCOUNTING_UNSPECIFIED = 0;
+  POSITION_ACCOUNTING_NETTING = 1;
+  POSITION_ACCOUNTING_HEDGING = 2;
+}
+
+// A bridge-side approximation from the symbol's session windows, never a
+// broker-confirmed exchange phase.
+enum TradingPhase {
+  TRADING_PHASE_UNSPECIFIED = 0;
+  TRADING_PHASE_CONTINUOUS = 1;
+  TRADING_PHASE_PRE_OPEN_AUCTION = 2;
+  TRADING_PHASE_CLOSING_AUCTION = 3;
+  TRADING_PHASE_HALTED = 4;
+  TRADING_PHASE_CLOSED = 5;
+}
+
+enum OrderState {
+  ORDER_STATE_UNSPECIFIED = 0;
+  ORDER_STATE_RECEIVED = 1;
+  ORDER_STATE_SUBMITTED = 2;
+  ORDER_STATE_ACKNOWLEDGED = 3;
+  ORDER_STATE_PARTIALLY_FILLED = 4;
+  ORDER_STATE_FILLED = 5;
+  ORDER_STATE_PENDING_CANCEL = 6;
+  ORDER_STATE_PENDING_REPLACE = 7;
+  ORDER_STATE_REPLACED = 8;
+  ORDER_STATE_REJECTED = 9;
+  ORDER_STATE_CANCELED = 10;
+  ORDER_STATE_EXPIRED = 11;
+  // The bridge could not determine the outcome; see ReconcileOrder.
+  ORDER_STATE_UNKNOWN = 12;
+}
+
+enum ReplaceOutcome {
+  REPLACE_OUTCOME_UNSPECIFIED = 0;
+  REPLACE_OUTCOME_AMENDED = 1;
+  REPLACE_OUTCOME_REPLACED = 2;
+  REPLACE_OUTCOME_CANCEL_FAILED = 3;
+  REPLACE_OUTCOME_CANCELED_NEW_REJECTED = 4;
+  REPLACE_OUTCOME_BOTH_OPEN = 5;
+  REPLACE_OUTCOME_UNKNOWN = 6;
+  REPLACE_OUTCOME_PENDING = 7;
+}
+
+enum KillSwitchAction {
+  KILL_SWITCH_ACTION_UNSPECIFIED = 0;
+  KILL_SWITCH_ACTION_HALT_NEW_ORDERS = 1;
+  KILL_SWITCH_ACTION_CANCEL_ALL = 2;
+  KILL_SWITCH_ACTION_FLATTEN = 3;
+}
+
+enum KillSwitchState {
+  KILL_SWITCH_STATE_UNSPECIFIED = 0;
+  KILL_SWITCH_STATE_NORMAL = 1;
+  KILL_SWITCH_STATE_HALTED = 2;
+  KILL_SWITCH_STATE_CANCELED_ALL = 3;
+  KILL_SWITCH_STATE_FLATTENED = 4;
+}
+
+enum Timeframe {
+  TIMEFRAME_UNSPECIFIED = 0;
+  TIMEFRAME_M1 = 1;
+  TIMEFRAME_M5 = 2;
+  TIMEFRAME_M15 = 3;
+  TIMEFRAME_M30 = 4;
+  TIMEFRAME_H1 = 5;
+  TIMEFRAME_H4 = 6;
+  TIMEFRAME_D1 = 7;
+  TIMEFRAME_W1 = 8;
+  TIMEFRAME_MN1 = 9;
+}
+
+enum BookSide {
+  BOOK_SIDE_UNSPECIFIED = 0;
+  BOOK_SIDE_BUY = 1;
+  BOOK_SIDE_SELL = 2;
+}
+
+enum Channel {
+  CHANNEL_UNSPECIFIED = 0;
+  CHANNEL_TICKS = 1;
+  CHANNEL_BARS = 2;
+  CHANNEL_BOOK = 3;
+  CHANNEL_EXECUTIONS = 4;
+  CHANNEL_STATUS = 5;
+  CHANNEL_ACCOUNT = 6;
+}
+
+enum SourceTimeUnit {
+  SOURCE_TIME_UNIT_UNSPECIFIED = 0;
+  SOURCE_TIME_UNIT_SECONDS = 1;
+  SOURCE_TIME_UNIT_MILLISECONDS = 2;
+}
+
+enum TimeBasis {
+  TIME_BASIS_UNSPECIFIED = 0;
+  // The instant the exchange or terminal reported.
+  TIME_BASIS_EXCHANGE_REPORTED = 1;
+  // The instant the bridge observed the data; the source carries no time.
+  TIME_BASIS_BRIDGE_OBSERVED = 2;
+}
+
+// ------------------------------------------------------------------ errors
+
+// Serialized into the trailing metadata entry `mt5-bridge-problem-bin` of a
+// failed call. The members are the ones of the Problem Details document
+// (RFC 9457) the REST API answers with; `status` is left out, because the
+// status of a gRPC call is the call's own.
+message Problem {
+  // Identifies the kind of problem: "urn:mt5-bridge:problem:<name>". Compare
+  // it as a string.
+  string type = 1;
+  // Short summary of the kind, the same for every occurrence.
+  string title = 2;
+  // What went wrong this time, for a person; also the status message.
+  string detail = 3;
+  // The method that failed: "/mt5_bridge.v1.Trading/SubmitOrder".
+  string instance = 4;
+  // Machine-readable name of the kind, one per `type`.
+  string code = 5;
+  // True when the same call can succeed later.
+  bool retryable = 6;
+  optional int64 mt5_retcode = 7;
+  optional string mt5_last_error = 8;
+  // On a retryable problem: how long to wait before the next attempt.
+  optional int32 retry_after_seconds = 9;
+  // Only on validation-error: one entry per invalid value.
+  repeated InvalidValue errors = 10;
+}
+
+message InvalidValue {
+  // The request field, by its name in this file ("volume", "op").
+  string field = 1;
+  string detail = 2;
+}
+
+// ------------------------------------------------------------- market data
+
+message GetHealthRequest {}
+
+message Health {
+  string status = 1;
+  bool terminal_connected = 2;
+  bool algo_trading_enabled = 3;
+  KillSwitchState kill_switch_state = 4;
+  double clock_drift_seconds = 5;
+  bool clock_drift_within_threshold = 6;
+  bool auction_participation_supported = 7;
+  optional double tick_poll_latency_seconds = 8;
+  optional double bar_poll_latency_seconds = 9;
+  optional double execution_poll_latency_seconds = 10;
+}
+
+message GetTerminalRequest {}
+
+message Terminal {
+  bool connected = 1;
+  bool algo_trading_enabled = 2;
+  int64 build = 3;
+  string name = 4;
+  string company = 5;
+}
+
+message GetAccountRequest {}
+
+message Account {
+  int64 login = 1;
+  string balance = 2;
+  string equity = 3;
+  string margin = 4;
+  string margin_free = 5;
+  string currency = 6;
+  PositionAccounting position_accounting = 7;
+  bool trade_allowed = 8;
+}
+
+message ListSymbolsRequest {
+  // A terminal group filter such as "*WIN*"; every symbol when absent.
+  optional string group = 1;
+}
+
+message SymbolSummary {
+  string name = 1;
+  string description = 2;
+  bool is_continuous_series = 3;
+  bool trading_allowed = 4;
+}
+
+message ListSymbolsResponse {
+  repeated SymbolSummary symbols = 1;
+}
+
+message GetSymbolRequest {
+  string symbol = 1;
+}
+
+message SymbolDetail {
+  string name = 1;
+  string description = 2;
+  bool is_continuous_series = 3;
+  bool trading_allowed = 4;
+  string tick_size = 5;
+  string volume_min = 6;
+  string volume_max = 7;
+  string volume_step = 8;
+  repeated FillingMode filling_modes = 9;
+  repeated TimeInForce time_in_force_modes = 10;
+  TradingPhase trading_phase = 11;
+}
+
+message ListBarsRequest {
+  string symbol = 1;
+  Timeframe timeframe = 2;
+  // 100 when absent.
+  optional int32 count = 3;
+}
+
+message Bar {
+  string symbol = 1;
+  Timeframe timeframe = 2;
+  // Bar open time, epoch seconds.
+  int64 time = 3;
+  string open = 4;
+  string high = 5;
+  string low = 6;
+  string close = 7;
+  string volume = 8;
+}
+
+message ListBarsResponse {
+  repeated Bar bars = 1;
+}
+
+message GetLatestTickRequest {
+  string symbol = 1;
+}
+
+message Tick {
+  string symbol = 1;
+  // Epoch milliseconds.
+  int64 time_msc = 2;
+  string bid = 3;
+  string ask = 4;
+  string last = 5;
+  string volume = 6;
+}
+
+message GetLatestTickResponse {
+  optional Tick tick = 1;
+}
+
+message ListTicksRequest {
+  string symbol = 1;
+  // 100 when absent.
+  optional int32 count = 2;
+  // Epoch milliseconds. A recent window when absent; 0 pages from the oldest
+  // tick the terminal retains.
+  optional int64 from_time_msc = 3;
+}
+
+message ListTicksResponse {
+  repeated Tick ticks = 1;
+}
+
+message GetBookRequest {
+  string symbol = 1;
+}
+
+message BookLevel {
+  BookSide side = 1;
+  string price = 2;
+  string volume = 3;
+}
+
+message GetBookResponse {
+  repeated BookLevel levels = 1;
+}
+
+// ----------------------------------------------------------------- trading
+
+message Order {
+  string client_order_id = 1;
+  string symbol = 2;
+  OrderSide side = 3;
+  OrderType order_type = 4;
+  string volume = 5;
+  optional string price = 6;
+  TimeInForce time_in_force = 7;
+  OrderState state = 8;
+  optional int64 ticket = 9;
+  optional int64 mt5_retcode = 10;
+  optional string mt5_last_error = 11;
+  optional string reason = 12;
+}
+
+message ListOpenOrdersRequest {}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+}
+
+message GetOrderRequest {
+  string client_order_id = 1;
+}
+
+message ListPositionsRequest {}
+
+message Position {
+  string symbol = 1;
+  OrderSide side = 2;
+  string volume = 3;
+  string price_open = 4;
+  string price_current = 5;
+}
+
+message ListPositionsResponse {
+  repeated Position positions = 1;
+}
+
+// The terminal's own history between two instants, epoch seconds.
+message HistoryRequest {
+  int64 from_epoch = 1;
+  int64 to_epoch = 2;
+}
+
+// The terminal's record of an order, not the bridge journal's.
+message HistoryOrder {
+  int64 ticket = 1;
+  string symbol = 2;
+  OrderSide side = 3;
+  OrderType order_type = 4;
+  string volume_initial = 5;
+  string volume_current = 6;
+  string price_open = 7;
+  // Epoch seconds.
+  int64 time_setup = 8;
+  TimeInForce time_in_force = 9;
+}
+
+message ListHistoryOrdersResponse {
+  repeated HistoryOrder orders = 1;
+}
+
+message Deal {
+  int64 ticket = 1;
+  int64 order_ticket = 2;
+  string symbol = 3;
+  OrderSide side = 4;
+  string volume = 5;
+  string price = 6;
+  string commission = 7;
+  string swap = 8;
+  string profit = 9;
+  // Epoch milliseconds.
+  int64 time_msc = 10;
+}
+
+message ListHistoryDealsResponse {
+  repeated Deal deals = 1;
+}
+
+// A new order, for CheckOrder and SubmitOrder.
+message OrderRequest {
+  string client_order_id = 1;
+  string symbol = 2;
+  OrderSide side = 3;
+  OrderType type = 4;
+  string volume = 5;
+  TimeInForce time_in_force = 6;
+  optional string price = 7;
+  optional string stop_loss = 8;
+  optional string take_profit = 9;
+  // Epoch seconds, for TIME_IN_FORCE_GTD.
+  optional int64 expiration = 10;
+}
+
+message OrderCheck {
+  int64 retcode = 1;
+  string comment = 2;
+  string balance = 3;
+  string equity = 4;
+  string margin = 5;
+  string margin_free = 6;
+}
+
+message SubmitOrderResponse {
+  Order order = 1;
+  // True when client_order_id was already known and the stored order is returned.
+  bool replayed = 2;
+}
+
+message AmendOrderRequest {
+  string client_order_id = 1;
+  optional string price = 2;
+  optional string stop_loss = 3;
+  optional string take_profit = 4;
+  optional int64 expiration = 5;
+}
+
+message ReplaceOrderRequest {
+  // The order to replace.
+  string client_order_id = 1;
+  // Idempotency key of this replacement.
+  string operation_id = 2;
+  string new_client_order_id = 3;
+  string symbol = 4;
+  OrderSide side = 5;
+  OrderType type = 6;
+  string volume = 7;
+  TimeInForce time_in_force = 8;
+  optional string price = 9;
+  optional string stop_loss = 10;
+  optional string take_profit = 11;
+  optional int64 expiration = 12;
+}
+
+message ReplaceOrderResponse {
+  string operation_id = 1;
+  ReplaceOutcome outcome = 2;
+  optional Order original = 3;
+  optional Order new = 4;
+}
+
+message CancelOrderRequest {
+  string client_order_id = 1;
+}
+
+message ReconcileOrderRequest {
+  string client_order_id = 1;
+}
+
+message ActivateKillSwitchRequest {
+  KillSwitchAction action = 1;
+}
+
+message RearmKillSwitchRequest {}
+
+message KillSwitchStatus {
+  KillSwitchState state = 1;
+  optional string reason = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+message HeartbeatRequest {}
+
+message HeartbeatResponse {}
+
+// --------------------------------------------------------------- streaming
+
+message StreamRequest {
+  oneof op {
+    Subscribe subscribe = 1;
+    Unsubscribe unsubscribe = 2;
+    Resume resume = 3;
+    Ping ping = 4;
+  }
+}
+
+message Subscribe {
+  Channel channel = 1;
+  // For ticks, bars and book.
+  repeated string symbols = 2;
+  // For bars.
+  Timeframe timeframe = 3;
+}
+
+message Unsubscribe {
+  Channel channel = 1;
+  repeated string symbols = 2;
+  Timeframe timeframe = 3;
+}
+
+// Subscribes to `executions` starting at `from_seq`. Subscribing without it
+// replays every retained event.
+message Resume {
+  int64 from_seq = 1;
+}
+
+message Ping {}
+
+// One message of the stream: an event of the Open Cybersecurity Schema
+// Framework 1.9.0, with the classification, metadata and sequence the same
+// event has on /v1/stream (docs/ocsf.md). The field names are the OCSF
+// attribute names. A client dispatches on metadata.event_code: a channel
+// name, "pong" or "RESYNC_REQUIRED".
+message StreamEvent {
+  // 0 Base Event (ticks, bars, book, account), 3004 Entity Management
+  // (executions), 6002 Application Lifecycle (status), 6003 API Activity
+  // (pong, RESYNC_REQUIRED).
+  int32 class_uid = 1;
+  int32 category_uid = 2;
+  int32 activity_id = 3;
+  // class_uid * 100 + activity_id.
+  int32 type_uid = 4;
+  // The OCSF caption of the activity; the bridge's own label when
+  // activity_id is 99 (Other).
+  string activity_name = 5;
+  // The event time in true UTC, milliseconds since the epoch.
+  int64 time = 6;
+  int32 severity_id = 7;
+  // 0 Unknown, 1 Success, 2 Failure; absent on market data, account and status.
+  optional int32 status_id = 8;
+  optional string status_code = 9;
+  optional string status_detail = 10;
+  optional string message = 11;
+  EventMetadata metadata = 12;
+
+  // The control replies only: the client operation they answer, the
+  // terminal account and the address the call came from.
+  optional Api api = 13;
+  optional Actor actor = 14;
+  optional NetworkEndpoint src_endpoint = 15;
+
+  // The data messages only (`unmapped.source_time_unit` and
+  // `unmapped.time_basis` on /v1/stream): the unit of
+  // metadata.original_time, and whether `time` is the exchange's or the
+  // bridge's.
+  SourceTimeUnit source_time_unit = 16;
+  TimeBasis time_basis = 17;
+
+  // The domain payload, by channel; none on a control reply. On /v1/stream
+  // it is `entity.data` for executions and `unmapped.payload` otherwise.
+  oneof payload {
+    TickPayload tick = 20;
+    BarPayload bar = 21;
+    BookPayload book = 22;
+    ExecutionPayload execution = 23;
+    StatusPayload status = 24;
+    AccountPayload account = 25;
+  }
+}
+
+message EventMetadata {
+  // The OCSF schema version, "1.9.0".
+  string version = 1;
+  Product product = 2;
+  // The channel, "pong" or "RESYNC_REQUIRED".
+  string event_code = 3;
+  // The stream id: "ticks:<symbol>", "bars:<symbol>:<timeframe>",
+  // "book:<symbol>", "executions", "status" or "account".
+  optional string log_name = 4;
+  // Increases by one per stream id. Durable for `executions`; for the other
+  // channels it restarts with every call.
+  optional int64 sequence = 5;
+  // The time the source reported, untouched, as a decimal string.
+  optional string original_time = 6;
+  // When the bridge received the datum, milliseconds since the epoch.
+  optional int64 processed_time = 7;
+  // Executions only: "executions:<sequence>".
+  optional string uid = 8;
+  // Executions only: the client_order_id.
+  optional string correlation_uid = 9;
+}
+
+message Product {
+  string name = 1;
+  string vendor_name = 2;
+  string version = 3;
+}
+
+message Api {
+  // "ping", "subscribe" or "resume".
+  string operation = 1;
+}
+
+message Actor {
+  User user = 1;
+}
+
+// The terminal account the bridge is bound to; the bridge does not identify
+// its callers.
+message User {
+  optional string uid = 1;
+  optional string name = 2;
+}
+
+message NetworkEndpoint {
+  optional string ip = 1;
+  optional string name = 2;
+  optional int32 port = 3;
+}
+
+message TickPayload {
+  string symbol = 1;
+  string bid = 2;
+  string ask = 3;
+  string last = 4;
+  string volume = 5;
+}
+
+message BarPayload {
+  string symbol = 1;
+  Timeframe timeframe = 2;
+  string open = 3;
+  string high = 4;
+  string low = 5;
+  string close = 6;
+  string volume = 7;
+}
+
+message BookPayload {
+  string symbol = 1;
+  repeated BookLevel levels = 2;
+}
+
+// The order is the managed entity of the event: its client_order_id is also
+// metadata.correlation_uid.
+message ExecutionPayload {
+  string client_order_id = 1;
+  string symbol = 2;
+  OrderState state = 3;
+  optional int64 ticket = 4;
+  optional int64 mt5_retcode = 5;
+  optional string reason = 6;
+}
+
+message StatusPayload {
+  KillSwitchState kill_switch_state = 1;
+  bool terminal_connected = 2;
+  // Present only on a trading-phase message: the symbol whose phase changed.
+  optional string symbol = 3;
+  optional TradingPhase trading_phase = 4;
+}
+
+message AccountPayload {
+  string balance = 1;
+  string equity = 2;
+  string margin = 3;
+  string margin_free = 4;
+}

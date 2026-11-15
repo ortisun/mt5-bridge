@@ -1,0 +1,966 @@
+openapi: 3.1.0
+info:
+  title: mt5-bridge
+  version: "1.0.0"
+  description: >
+    REST v1 contract for the MT5 bridge (plan §114). The bridge is a thin,
+    idempotent gateway between its clients and a Windows MetaTrader5 terminal:
+    it has no strategy, signal, portfolio, or model of its own. This
+    document, together with ws_messages.schema.json and mt5_bridge.proto
+    (the same operations over gRPC) in this directory, is
+    the source of truth for both the bridge server and any client adapter;
+    it lives outside both uv projects.
+    Every 4xx and 5xx response is a Problem Details document (RFC 9457,
+    application/problem+json); docs/errors.md lists the problem types.
+servers:
+  - url: "{scheme}://{host}:{port}"
+    description: >
+      TLS is optional for any host, never mandatory (2026-09-29 user
+      decision): `scheme` is `https` when the deployment sets both
+      MT5_BRIDGE_TLS_CERTFILE/_KEYFILE, `http` otherwise.
+    variables:
+      scheme:
+        default: https
+        enum: [http, https]
+      host:
+        default: 127.0.0.1
+      port:
+        default: "8765"
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Bridge, terminal and broker-connection state; polling latencies.
+      responses:
+        "200":
+          description: Health snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/terminal:
+    get:
+      operationId: getTerminal
+      summary: Build, broker, server, algo-trading enabled, observed time contract.
+      responses:
+        "200":
+          description: Terminal info.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerminalResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/account:
+    get:
+      operationId: getAccount
+      summary: Balance, equity, margin, position-accounting mode, currency.
+      responses:
+        "200":
+          description: Account snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/symbols:
+    get:
+      operationId: listSymbols
+      summary: Available symbols.
+      parameters:
+        - name: group
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Symbol list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SymbolSummary" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/symbols/{symbol}:
+    get:
+      operationId: getSymbol
+      summary: Tick size, step, min/max volume, filling modes, sessions, trading status.
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Symbol rules, read fresh from the terminal (never hardcoded).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SymbolDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/bars:
+    get:
+      operationId: getBars
+      summary: Closed bars only (plan rule 28).
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema: { type: string }
+        - name: timeframe
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Timeframe" }
+        - name: count
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 100 }
+      responses:
+        "200":
+          description: Closed bars, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Bar" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/ticks/latest:
+    get:
+      operationId: getLatestTick
+      summary: The terminal's current quote for one symbol.
+      description: >
+        The terminal's current tick (symbol_info_tick) as a zero- or
+        one-element array: what a stream client reloads after a gap on the
+        ticks channel. Empty when the terminal has no quote for the symbol.
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Zero or one tick.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1
+                items: { $ref: "#/components/schemas/Tick" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/ticks:
+    get:
+      operationId: getTicks
+      summary: Recent ticks.
+      description: >
+        Ticks matching symbol with time_msc >= from_time_msc, oldest first,
+        capped at count. Omitting from_time_msc does not default to epoch 0
+        (the oldest retained tick): it defaults to a recent window ending
+        now — MT5_BRIDGE_TICKS_DEFAULT_LOOKBACK_SECONDS, 300 (5 minutes) by
+        default — because this bridge keeps no long-term tick history and a
+        caller almost always wants recent ticks. Pass from_time_msc=0
+        explicitly to page from the very oldest retained tick.
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema: { type: string }
+        - name: from_time_msc
+          in: query
+          required: false
+          description: >
+            Lower bound, milliseconds since the Unix epoch. Omit to use the
+            server's default lookback window (see the operation description)
+            rather than the oldest retained tick.
+          schema: { type: integer, minimum: 0 }
+        - name: count
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 100 }
+      responses:
+        "200":
+          description: Ticks, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Tick" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/book/{symbol}:
+    get:
+      operationId: getBook
+      summary: Depth, if supplied by the broker.
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Book levels (empty if the broker supplies no depth).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BookLevel" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/orders:
+    get:
+      operationId: listOpenOrders
+      summary: Open orders (bridge journal view).
+      responses:
+        "200":
+          description: Open orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    post:
+      operationId: submitOrder
+      summary: Submit order — idempotent by client_order_id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitOrderRequest" }
+      responses:
+        "201":
+          description: A new client_order_id was received.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "200":
+          description: Replay of an existing client_order_id with the same payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "409":
+          description: A different payload was already used with this client_order_id.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/orders/check:
+    post:
+      operationId: checkOrder
+      summary: Validation (order_check) without sending.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitOrderRequest" }
+      responses:
+        "200":
+          description: Pre-trade check result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderCheckResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/orders/{client_order_id}:
+    get:
+      operationId: getOrder
+      summary: Consolidated state (journal + terminal).
+      parameters:
+        - { $ref: "#/components/parameters/ClientOrderId" }
+      responses:
+        "200":
+          description: Order state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    patch:
+      operationId: amendOrder
+      summary: Amend supported price/protections/expiry; does not change volume/type.
+      parameters:
+        - { $ref: "#/components/parameters/ClientOrderId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AmendOrderRequest" }
+      responses:
+        "200":
+          description: Amended order state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The order is not in an amendable state.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    delete:
+      operationId: cancelOrder
+      summary: Cancel.
+      parameters:
+        - { $ref: "#/components/parameters/ClientOrderId" }
+      responses:
+        "200":
+          description: Resulting order state (CANCELED, or the true terminal
+            state discovered if cancellation lost a race, e.g. FILLED).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/orders/{client_order_id}/replace:
+    post:
+      operationId: replaceOrder
+      summary: Explicit cancel-replace with operation_id and new_client_order_id.
+      description: >
+        Idempotent by operation_id: repeating the same request returns the
+        stored outcome; a different payload under the same operation_id is
+        a conflict (mirrors client_order_id idempotency — plan §86).
+      parameters:
+        - { $ref: "#/components/parameters/ClientOrderId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplaceOrderRequest" }
+      responses:
+        "200":
+          description: The discriminated cancel-replace outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplaceOrderResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A different payload was already used with this operation_id.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/orders/{client_order_id}/reconcile:
+    post:
+      operationId: reconcileOrder
+      summary: Re-examine one UNKNOWN order against the terminal (plan §56).
+      description: >
+        Audited. A known ticket takes the terminal's state; an entry without
+        a ticket resolves to a unique magic+tag candidate, or to REJECTED only
+        when the terminal holds no order or deal with this bridge's magic in a
+        window covering the entry. Anything else stays UNKNOWN and keeps its
+        symbol blocked.
+      parameters:
+        - { $ref: "#/components/parameters/ClientOrderId" }
+      responses:
+        "200":
+          description: The entry after reconciliation (possibly still UNKNOWN).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The entry is not UNKNOWN or RECEIVED.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/positions:
+    get:
+      operationId: listPositions
+      responses:
+        "200":
+          description: Open positions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Position" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/history/orders:
+    get:
+      operationId: listHistoryOrders
+      parameters:
+        - { $ref: "#/components/parameters/FromEpoch" }
+        - { $ref: "#/components/parameters/ToEpoch" }
+      responses:
+        "200":
+          description: Terminal order history (not the bridge journal).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/HistoryOrder" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/history/deals:
+    get:
+      operationId: listHistoryDeals
+      parameters:
+        - { $ref: "#/components/parameters/FromEpoch" }
+        - { $ref: "#/components/parameters/ToEpoch" }
+      responses:
+        "200":
+          description: Terminal deal history.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Deal" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/kill-switch:
+    post:
+      operationId: activateKillSwitch
+      summary: "{action: HALT_NEW_ORDERS | CANCEL_ALL | FLATTEN}"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KillSwitchRequest" }
+      responses:
+        "200":
+          description: Resulting (escalation-only) kill-switch state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KillSwitchStatus" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    delete:
+      operationId: rearmKillSwitch
+      summary: Rearm — return the kill switch to NORMAL.
+      responses:
+        "200":
+          description: Kill switch returned to NORMAL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KillSwitchStatus" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/heartbeat:
+    post:
+      operationId: heartbeat
+      summary: Feed the dead-man switch.
+      description: >
+        Every call (re)establishes the lease. Once a lease exists and no
+        heartbeat arrives within the timeout, the bridge cancels all open
+        orders (plan §107).
+      responses:
+        "204":
+          description: Lease renewed.
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+components:
+  parameters:
+    ClientOrderId:
+      name: client_order_id
+      in: path
+      required: true
+      schema: { type: string }
+    FromEpoch:
+      name: from_epoch
+      in: query
+      required: true
+      schema: { type: integer }
+    ToEpoch:
+      name: to_epoch
+      in: query
+      required: true
+      schema: { type: integer }
+  responses:
+    NotFound:
+      description: Unknown symbol or client_order_id.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PayloadTooLarge:
+      description: The request body exceeds MT5_BRIDGE_MAX_REQUEST_BODY_BYTES.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    ValidationError:
+      description: A request body, query or path value is invalid; `errors` locates each one.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    InternalError:
+      description: The bridge failed; the body never quotes the cause.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    ServiceUnavailable:
+      description: >
+        The bridge worker or the terminal cannot serve the request now, or
+        the clock drift is over its threshold. `retryable` is true and
+        Retry-After says when to try again.
+      headers:
+        Retry-After: { $ref: "#/components/headers/Retry-After" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  headers:
+    Retry-After:
+      description: Seconds to wait before repeating the request (RFC 9110 §10.2.3).
+      schema: { type: integer, minimum: 0 }
+  schemas:
+    Decimal:
+      type: string
+      description: >
+        A base-10 decimal amount, always transmitted as a string (never a
+        bare JSON number) so a client's JSON parser cannot round a price or
+        quantity through float (plan rule 33).
+      pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+    Problem:
+      type: object
+      description: >
+        A Problem Details document (RFC 9457), the body of every 4xx and 5xx
+        response, sent as application/problem+json. `type`, `title`, `status`,
+        `detail` and `instance` are the standard members; the rest are
+        extension members of this bridge. A client must ignore members it
+        does not know.
+      required: [type, title, status, detail, code, retryable]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: >
+            Identifies the kind of problem; compared as a string, never
+            dereferenced. `urn:mt5-bridge:problem:<name>` for the bridge's
+            own kinds, `about:blank` for a status the HTTP layer raised with
+            nothing to add (unknown path, method not allowed).
+          examples: ["urn:mt5-bridge:problem:order-not-found"]
+        title:
+          type: string
+          description: Short summary of the kind of problem; the same for every occurrence.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+          description: The HTTP status code of this response.
+        detail:
+          type: string
+          description: What went wrong in this occurrence, for a person to read.
+        instance:
+          type: string
+          format: uri-reference
+          description: The path of the request that failed.
+        code:
+          type: string
+          description: Stable machine-readable name of the kind of problem, one per `type`.
+        retryable:
+          type: boolean
+          description: True when repeating the same request later can succeed.
+        mt5_retcode: { type: ["integer", "null"] }
+        mt5_last_error: { type: ["string", "null"] }
+        errors:
+          type: array
+          description: Present on a validation problem, one entry per invalid value.
+          items: { $ref: "#/components/schemas/ProblemFieldError" }
+    ProblemFieldError:
+      type: object
+      description: >
+        One invalid value. A value in the request body is located by
+        `pointer`; a query, path or header value by `in` and `parameter`.
+      required: [detail]
+      properties:
+        detail: { type: string }
+        pointer:
+          type: string
+          description: JSON Pointer (RFC 6901) into the request body, in URI-fragment form.
+          examples: ["#/volume"]
+        in:
+          type: string
+          enum: [query, path, header, cookie]
+        parameter: { type: string }
+    OrderSide:
+      type: string
+      enum: [BUY, SELL]
+    OrderType:
+      type: string
+      enum: [MARKET, LIMIT, STOP, STOP_LIMIT]
+    TimeInForce:
+      type: string
+      enum: [DAY, GTC, IOC, FOK, GTD]
+    FillingMode:
+      type: string
+      enum: [FOK, IOC, RETURN]
+    Timeframe:
+      type: string
+      enum: [M1, M5, M15, M30, H1, H4, D1, W1, MN1]
+    PositionAccounting:
+      type: string
+      enum: [NETTING, HEDGING]
+    OrderState:
+      type: string
+      description: The bridge journal's order-lifecycle vocabulary (plan §56 subset).
+      enum:
+        - RECEIVED
+        - SUBMITTED
+        - ACKNOWLEDGED
+        - PARTIALLY_FILLED
+        - FILLED
+        - PENDING_CANCEL
+        - PENDING_REPLACE
+        - REPLACED
+        - REJECTED
+        - CANCELED
+        - EXPIRED
+        - UNKNOWN
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - terminal_connected
+        - algo_trading_enabled
+        - kill_switch_state
+        - clock_drift_seconds
+        - clock_drift_within_threshold
+        - auction_participation_supported
+      properties:
+        status: { type: string }
+        terminal_connected: { type: boolean }
+        algo_trading_enabled: { type: boolean }
+        kill_switch_state: { type: string }
+        clock_drift_seconds: { type: number }
+        clock_drift_within_threshold: { type: boolean }
+        auction_participation_supported:
+          type: boolean
+          description: >-
+            Bridge-wide capability declaration (audit F4b, plan section 114): whether
+            this deployment supports positive auction-participation planning for a
+            phase reported by /v1/symbols/{symbol}'s trading_phase. Real MT5 phase
+            qualification against B3's own auction schedule remains external (ADR-078).
+        tick_poll_latency_seconds: { type: ["number", "null"] }
+        bar_poll_latency_seconds: { type: ["number", "null"] }
+        execution_poll_latency_seconds: { type: ["number", "null"] }
+    TerminalResponse:
+      type: object
+      required: [connected, algo_trading_enabled, build, name, company]
+      properties:
+        connected: { type: boolean }
+        algo_trading_enabled: { type: boolean }
+        build: { type: integer }
+        name: { type: string }
+        company: { type: string }
+    AccountResponse:
+      type: object
+      required:
+        - login
+        - balance
+        - equity
+        - margin
+        - margin_free
+        - currency
+        - position_accounting
+        - trade_allowed
+      properties:
+        login: { type: integer }
+        balance: { $ref: "#/components/schemas/Decimal" }
+        equity: { $ref: "#/components/schemas/Decimal" }
+        margin: { $ref: "#/components/schemas/Decimal" }
+        margin_free: { $ref: "#/components/schemas/Decimal" }
+        currency: { type: string }
+        position_accounting: { $ref: "#/components/schemas/PositionAccounting" }
+        trade_allowed: { type: boolean }
+    SymbolSummary:
+      type: object
+      required: [name, description, is_continuous_series, trading_allowed]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        is_continuous_series: { type: boolean }
+        trading_allowed: { type: boolean }
+    TradingPhase:
+      type: string
+      description: >-
+        A bridge-side approximation from this symbol's own trading_allowed/sessions
+        data (plan section 114 "B3 Specifics": "terminal visibility of trading
+        phases is limited"; audit F4b), never a broker-confirmed exchange phase.
+      enum: [CONTINUOUS, PRE_OPEN_AUCTION, CLOSING_AUCTION, HALTED, CLOSED]
+    SymbolDetail:
+      allOf:
+        - $ref: "#/components/schemas/SymbolSummary"
+        - type: object
+          required:
+            - tick_size
+            - volume_min
+            - volume_max
+            - volume_step
+            - filling_modes
+            - time_in_force_modes
+            - trading_phase
+          properties:
+            tick_size: { $ref: "#/components/schemas/Decimal" }
+            volume_min: { $ref: "#/components/schemas/Decimal" }
+            volume_max: { $ref: "#/components/schemas/Decimal" }
+            volume_step: { $ref: "#/components/schemas/Decimal" }
+            filling_modes:
+              type: array
+              items: { $ref: "#/components/schemas/FillingMode" }
+            time_in_force_modes:
+              type: array
+              items: { $ref: "#/components/schemas/TimeInForce" }
+            trading_phase: { $ref: "#/components/schemas/TradingPhase" }
+    Bar:
+      type: object
+      required: [symbol, timeframe, time, open, high, low, close, volume]
+      properties:
+        symbol: { type: string }
+        timeframe: { type: string }
+        time: { type: integer }
+        open: { $ref: "#/components/schemas/Decimal" }
+        high: { $ref: "#/components/schemas/Decimal" }
+        low: { $ref: "#/components/schemas/Decimal" }
+        close: { $ref: "#/components/schemas/Decimal" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+    Tick:
+      type: object
+      required: [symbol, time_msc, bid, ask, last, volume]
+      properties:
+        symbol: { type: string }
+        time_msc: { type: integer }
+        bid: { $ref: "#/components/schemas/Decimal" }
+        ask: { $ref: "#/components/schemas/Decimal" }
+        last: { $ref: "#/components/schemas/Decimal" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+    BookLevel:
+      type: object
+      required: [side, price, volume]
+      properties:
+        side: { type: string, enum: [BUY, SELL] }
+        price: { $ref: "#/components/schemas/Decimal" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+    Order:
+      type: object
+      required:
+        - client_order_id
+        - symbol
+        - side
+        - order_type
+        - volume
+        - time_in_force
+        - state
+        - ticket
+        - mt5_retcode
+        - mt5_last_error
+        - reason
+      properties:
+        client_order_id: { type: string }
+        symbol: { type: string }
+        side: { $ref: "#/components/schemas/OrderSide" }
+        order_type: { $ref: "#/components/schemas/OrderType" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+        price: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
+        time_in_force: { $ref: "#/components/schemas/TimeInForce" }
+        state: { $ref: "#/components/schemas/OrderState" }
+        ticket: { type: ["integer", "null"] }
+        mt5_retcode: { type: ["integer", "null"] }
+        mt5_last_error: { type: ["string", "null"] }
+        reason: { type: ["string", "null"] }
+    Position:
+      type: object
+      required: [symbol, side, volume, price_open, price_current]
+      properties:
+        symbol: { type: string }
+        side: { $ref: "#/components/schemas/OrderSide" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+        price_open: { $ref: "#/components/schemas/Decimal" }
+        price_current: { $ref: "#/components/schemas/Decimal" }
+    HistoryOrder:
+      type: object
+      required:
+        - ticket
+        - symbol
+        - side
+        - order_type
+        - volume_initial
+        - volume_current
+        - price_open
+        - time_setup
+        - time_in_force
+      properties:
+        ticket: { type: integer }
+        symbol: { type: string }
+        side: { $ref: "#/components/schemas/OrderSide" }
+        order_type: { $ref: "#/components/schemas/OrderType" }
+        volume_initial: { $ref: "#/components/schemas/Decimal" }
+        volume_current: { $ref: "#/components/schemas/Decimal" }
+        price_open: { $ref: "#/components/schemas/Decimal" }
+        time_setup: { type: integer }
+        time_in_force: { $ref: "#/components/schemas/TimeInForce" }
+    Deal:
+      type: object
+      required:
+        - ticket
+        - order_ticket
+        - symbol
+        - side
+        - volume
+        - price
+        - commission
+        - swap
+        - profit
+        - time_msc
+      properties:
+        ticket: { type: integer }
+        order_ticket: { type: integer }
+        symbol: { type: string }
+        side: { $ref: "#/components/schemas/OrderSide" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+        price: { $ref: "#/components/schemas/Decimal" }
+        commission: { $ref: "#/components/schemas/Decimal" }
+        swap: { $ref: "#/components/schemas/Decimal" }
+        profit: { $ref: "#/components/schemas/Decimal" }
+        time_msc: { type: integer }
+    SubmitOrderRequest:
+      type: object
+      required: [client_order_id, symbol, side, type, volume, time_in_force]
+      properties:
+        client_order_id: { type: string, minLength: 1 }
+        symbol: { type: string }
+        side: { $ref: "#/components/schemas/OrderSide" }
+        type: { $ref: "#/components/schemas/OrderType" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+        time_in_force: { $ref: "#/components/schemas/TimeInForce" }
+        price: { $ref: "#/components/schemas/Decimal" }
+        stop_loss: { $ref: "#/components/schemas/Decimal" }
+        take_profit: { $ref: "#/components/schemas/Decimal" }
+        expiration: { type: integer }
+    AmendOrderRequest:
+      type: object
+      properties:
+        price: { $ref: "#/components/schemas/Decimal" }
+        stop_loss: { $ref: "#/components/schemas/Decimal" }
+        take_profit: { $ref: "#/components/schemas/Decimal" }
+        expiration: { type: integer }
+    ReplaceOrderRequest:
+      type: object
+      required: [operation_id, new_client_order_id, symbol, side, type, volume, time_in_force]
+      properties:
+        operation_id: { type: string, minLength: 1 }
+        new_client_order_id: { type: string, minLength: 1 }
+        symbol: { type: string }
+        side: { $ref: "#/components/schemas/OrderSide" }
+        type: { $ref: "#/components/schemas/OrderType" }
+        volume: { $ref: "#/components/schemas/Decimal" }
+        time_in_force: { $ref: "#/components/schemas/TimeInForce" }
+        price: { $ref: "#/components/schemas/Decimal" }
+        stop_loss: { $ref: "#/components/schemas/Decimal" }
+        take_profit: { $ref: "#/components/schemas/Decimal" }
+        expiration: { type: integer }
+    OrderCheckResult:
+      type: object
+      required: [retcode, comment, balance, equity, margin, margin_free]
+      properties:
+        retcode: { type: integer }
+        comment: { type: string }
+        balance: { $ref: "#/components/schemas/Decimal" }
+        equity: { $ref: "#/components/schemas/Decimal" }
+        margin: { $ref: "#/components/schemas/Decimal" }
+        margin_free: { $ref: "#/components/schemas/Decimal" }
+    KillSwitchRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [HALT_NEW_ORDERS, CANCEL_ALL, FLATTEN]
+    KillSwitchStatus:
+      type: object
+      required: [state, reason, updated_at]
+      properties:
+        state:
+          type: string
+          enum: [NORMAL, HALTED, CANCELED_ALL, FLATTENED]
+        reason: { type: ["string", "null"] }
+        updated_at: { type: string, format: date-time }
+    ReplaceOutcomeBase:
+      type: object
+      required: [operation_id, outcome, original, new]
+      properties:
+        operation_id: { type: string }
+        original: { oneOf: [{ $ref: "#/components/schemas/Order" }, { type: "null" }] }
+        new: { oneOf: [{ $ref: "#/components/schemas/Order" }, { type: "null" }] }
+    ReplaceOutcomeReplaced:
+      allOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeBase"
+        - type: object
+          properties:
+            outcome: { const: REPLACED }
+    ReplaceOutcomeCancelFailed:
+      allOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeBase"
+        - type: object
+          properties:
+            outcome: { const: CANCEL_FAILED }
+            new: { type: "null" }
+    ReplaceOutcomeCanceledNewRejected:
+      allOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeBase"
+        - type: object
+          properties:
+            outcome: { const: CANCELED_NEW_REJECTED }
+    ReplaceOutcomeBothOpen:
+      allOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeBase"
+        - type: object
+          properties:
+            outcome: { const: BOTH_OPEN }
+    ReplaceOutcomeAmended:
+      allOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeBase"
+        - type: object
+          properties:
+            outcome: { const: AMENDED }
+            new: { type: "null" }
+    ReplaceOutcomeUnknown:
+      allOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeBase"
+        - type: object
+          properties:
+            outcome: { const: UNKNOWN }
+    ReplaceOrderResult:
+      oneOf:
+        - $ref: "#/components/schemas/ReplaceOutcomeReplaced"
+        - $ref: "#/components/schemas/ReplaceOutcomeCancelFailed"
+        - $ref: "#/components/schemas/ReplaceOutcomeCanceledNewRejected"
+        - $ref: "#/components/schemas/ReplaceOutcomeBothOpen"
+        - $ref: "#/components/schemas/ReplaceOutcomeAmended"
+        - $ref: "#/components/schemas/ReplaceOutcomeUnknown"
+      discriminator:
+        propertyName: outcome
+        mapping:
+          REPLACED: "#/components/schemas/ReplaceOutcomeReplaced"
+          CANCEL_FAILED: "#/components/schemas/ReplaceOutcomeCancelFailed"
+          CANCELED_NEW_REJECTED: "#/components/schemas/ReplaceOutcomeCanceledNewRejected"
+          BOTH_OPEN: "#/components/schemas/ReplaceOutcomeBothOpen"
+          AMENDED: "#/components/schemas/ReplaceOutcomeAmended"
+          UNKNOWN: "#/components/schemas/ReplaceOutcomeUnknown"
