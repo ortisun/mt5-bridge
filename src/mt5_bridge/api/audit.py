@@ -10,7 +10,9 @@ Each record is an OCSF API Activity event (``AuditRecord.to_ocsf``,
 ``docs/ocsf.md``): the method and path are the API operation and the HTTP
 request, the peer address is the source endpoint and the outcome sets the
 status. The bridge does not identify its callers, so the actor is the
-terminal account the request acts on. ``record`` stores the row and then
+terminal account the request acts on. A gRPC call is recorded with the method
+``GRPC`` and the path ``/<package>.<Service>/<Method>``; the name of the RPC
+sets the activity. ``record`` stores the row and then
 writes the same event to the ``mt5_bridge.audit`` logger, so the audit trail
 also reaches whatever the log handlers feed.
 """
@@ -27,6 +29,8 @@ from mt5_bridge.core.oms_state import BridgeOrderState, ReplaceOutcome
 _LOG = logging.getLogger("mt5_bridge.audit")
 
 AUDIT_EVENT_CODE = "audit"
+# The ``method`` of a record made by the gRPC API; every other one is an HTTP method.
+GRPC_METHOD = "GRPC"
 
 # Outcomes that mean the request did not do what it asked for, and the one
 # that means nobody knows yet (plan §56). Every other outcome is a success.
@@ -63,7 +67,24 @@ class AuditRecord:
 
     def to_ocsf(self) -> dict[str, object]:
         """This record as an OCSF API Activity event."""
-        activity, activity_name = ocsf.api_activity_for_method(self.method)
+        if self.method == GRPC_METHOD:
+            rpc_method = self.path.lstrip("/")
+            activity, activity_name = ocsf.api_activity_for_rpc(rpc_method.rpartition("/")[2])
+            call = ocsf.rpc_call_attributes(
+                account_id=self.account_id,
+                method=rpc_method,
+                src_host=self.src_host,
+                src_port=self.src_port,
+            )
+        else:
+            activity, activity_name = ocsf.api_activity_for_method(self.method)
+            call = ocsf.api_call_attributes(
+                account_id=self.account_id,
+                method=self.method,
+                path=self.path,
+                src_host=self.src_host,
+                src_port=self.src_port,
+            )
         status, level = _status_of(self.outcome)
         unmapped: dict[str, object] = {}
         if self.payload_hash is not None:
@@ -79,13 +100,7 @@ class AuditRecord:
             status_detail=self.detail,
             message=f"{self.method} {self.path}: {self.outcome}",
             metadata_attributes={"event_code": AUDIT_EVENT_CODE},
-            attributes=ocsf.api_call_attributes(
-                account_id=self.account_id,
-                method=self.method,
-                path=self.path,
-                src_host=self.src_host,
-                src_port=self.src_port,
-            ),
+            attributes=call,
             unmapped=unmapped,
         )
 

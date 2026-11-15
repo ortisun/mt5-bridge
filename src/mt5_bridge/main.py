@@ -20,6 +20,7 @@ from decimal import Decimal
 from mt5_bridge.api.app import create_app
 from mt5_bridge.api.app_state import AppState, HealthState
 from mt5_bridge.api.audit import AuditLog
+from mt5_bridge.api.grpc_api.server import GrpcServeOptions
 from mt5_bridge.clock import Clock, SystemClock
 from mt5_bridge.core import ocsf
 from mt5_bridge.core.clock_drift import ClockDriftState
@@ -236,6 +237,29 @@ def serve_options(env: Mapping[str, str]) -> ServeOptions:
     return ServeOptions(host=host, port=port, certfile=certfile, keyfile=keyfile)
 
 
+def grpc_serve_options(env: Mapping[str, str], http: ServeOptions) -> GrpcServeOptions | None:
+    """The gRPC listener, served only when ``MT5_BRIDGE_GRPC_PORT`` is set.
+
+    It binds ``MT5_BRIDGE_GRPC_HOST`` (the HTTP host when unset) and uses the
+    HTTP listener's certificate pair, so one deployment is either all TLS or
+    all plain.
+    """
+    raw_port = env.get("MT5_BRIDGE_GRPC_PORT")
+    if not raw_port:
+        return None
+    port = int(raw_port)
+    if not 0 < port < 65536:
+        raise RuntimeError(f"MT5_BRIDGE_GRPC_PORT must be a port number, not {raw_port!r}")
+    if port == http.port:
+        raise RuntimeError("MT5_BRIDGE_GRPC_PORT must differ from MT5_BRIDGE_PORT")
+    return GrpcServeOptions(
+        host=env.get("MT5_BRIDGE_GRPC_HOST") or http.host,
+        port=port,
+        certfile=http.certfile,
+        keyfile=http.keyfile,
+    )
+
+
 def _load_limits_config(env: Mapping[str, str]) -> LimitsConfig:
     allowlist_raw = env.get("MT5_BRIDGE_SYMBOL_ALLOWLIST")
     allowlist = (
@@ -422,7 +446,11 @@ def main() -> None:  # pragma: no cover - exercised via boot()/create_app() in t
     result = boot(os.environ, observability=observability)
     install_log_redaction(secrets=result.log_secrets)
     observability.redact(result.log_secrets)
-    app = create_app(result.state, start_background_loops_on_startup=True)
+    app = create_app(
+        result.state,
+        start_background_loops_on_startup=True,
+        grpc_options=grpc_serve_options(os.environ, options),
+    )
     logger.info("mt5-bridge starting", extra=ocsf.lifecycle_log_extra(ocsf.LifecycleActivity.START))
     uvicorn.run(
         app,

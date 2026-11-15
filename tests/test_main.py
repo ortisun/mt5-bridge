@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from mt5_bridge.api.app import create_app
+from mt5_bridge.api.grpc_api.server import GrpcServeOptions
 from mt5_bridge.clock import SystemClock
 from mt5_bridge.core.kill_switch import KillSwitchState
 from mt5_bridge.core.supervisor import AccountBindingMismatch
@@ -13,6 +14,7 @@ from mt5_bridge.main import (
     ServeOptions,
     boot,
     build_mt5_client,
+    grpc_serve_options,
     resolve_terminal_connection,
     serve_options,
 )
@@ -258,3 +260,39 @@ class TestLogSecretsCollectedAtBoot:
             assert result.log_secrets == frozenset()
         finally:
             result.state.worker.stop()
+
+
+def test_grpc_is_not_served_unless_a_port_is_set() -> None:
+    assert grpc_serve_options({}, serve_options({})) is None
+
+
+def test_the_grpc_listener_uses_the_http_host_and_certificate_pair() -> None:
+    env = {
+        "MT5_BRIDGE_HOST": "10.0.0.5",
+        "MT5_BRIDGE_GRPC_PORT": "8766",
+        "MT5_BRIDGE_TLS_CERTFILE": "cert.pem",
+        "MT5_BRIDGE_TLS_KEYFILE": "key.pem",
+    }
+
+    options = grpc_serve_options(env, serve_options(env))
+
+    assert options == GrpcServeOptions(
+        host="10.0.0.5", port=8766, certfile="cert.pem", keyfile="key.pem"
+    )
+
+
+def test_the_grpc_listener_can_bind_its_own_host() -> None:
+    env = {"MT5_BRIDGE_GRPC_PORT": "8766", "MT5_BRIDGE_GRPC_HOST": "127.0.0.2"}
+
+    options = grpc_serve_options(env, serve_options(env))
+
+    assert options is not None
+    assert (options.host, options.port) == ("127.0.0.2", 8766)
+
+
+@pytest.mark.parametrize("port", ["8765", "0", "70000"], ids=["the-http-port", "zero", "too-big"])
+def test_an_unusable_grpc_port_stops_startup(port: str) -> None:
+    env = {"MT5_BRIDGE_GRPC_PORT": port}
+
+    with pytest.raises(RuntimeError, match="MT5_BRIDGE_GRPC_PORT"):
+        grpc_serve_options(env, serve_options(env))

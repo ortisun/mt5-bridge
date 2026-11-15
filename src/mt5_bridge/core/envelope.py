@@ -23,8 +23,8 @@ id), ``sequence``, ``original_time`` (the source's raw time, a string) and
 ``bool``/``None``/nested ``dict``/``list``) by the time it reaches an
 envelope: producers convert ``Decimal``/``enum``/``datetime`` fields at the
 point they build the payload, not here. This module has no framework and no
-opinion on transport; ``api/ws.py`` is the only caller that turns a message
-into bytes on a socket.
+opinion on transport; ``api/ws.py`` sends a message as JSON on a socket and
+``api/grpc_api`` sends the same event as a protobuf ``StreamEvent``.
 """
 
 from collections.abc import Mapping

@@ -1,4 +1,4 @@
-.PHONY: sync hooks format lint types architecture test build commits check package bump contract release-notes release-gate
+.PHONY: sync hooks proto format lint types architecture test build commits check package bump contract release-notes release-gate
 
 # The range of commits `make commits` checks. The first commit of the repository
 # predates the rule, so the range starts after it.
@@ -9,6 +9,10 @@ sync:
 
 hooks:
 	git config core.hooksPath .githooks
+
+# Regenerate src/mt5_bridge/api/grpc_api/generated/ from the gRPC contract.
+proto:
+	uv run --locked python tools/generate_proto.py
 
 format:
 	uv run --locked ruff check --fix .

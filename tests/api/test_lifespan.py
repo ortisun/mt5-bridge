@@ -9,9 +9,13 @@ bounded wait below and the scheduled loops share one loop deterministically
 import asyncio
 import dataclasses
 
+import grpc
 import pytest
 
 from mt5_bridge.api.app import create_app
+from mt5_bridge.api.grpc_api.generated import mt5_bridge_pb2 as pb
+from mt5_bridge.api.grpc_api.generated import mt5_bridge_pb2_grpc as pb_grpc
+from mt5_bridge.api.grpc_api.server import GrpcServeOptions
 
 from testkit.app_builder import build_test_app_state
 
@@ -51,3 +55,23 @@ async def test_the_lifespan_schedules_every_background_loop() -> None:
     assert fast_state.health.last_execution_poll_at is not None
     assert fast_state.clock_drift_state.drift_seconds == 0.25
     assert fast_state.equity_tracker.current_equity is not None
+
+
+@pytest.mark.asyncio
+async def test_the_lifespan_serves_grpc_while_the_app_runs() -> None:
+    state, _fake_client = build_test_app_state()
+    app = create_app(state, grpc_options=GrpcServeOptions(host="127.0.0.1", port=0))
+
+    async with app.router.lifespan_context(app):
+        port: int = app.state.grpc_port
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+            account = await pb_grpc.MarketDataStub(channel).GetAccount(pb.GetAccountRequest())
+        # Only gRPC was asked for: no background loop was started with it.
+        loops = [t for t in asyncio.all_tasks() if t.get_name().startswith("mt5-bridge-")]
+
+    assert account.login == int(state.expected_account_id)
+    assert loops == []
+    async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+        with pytest.raises(grpc.aio.AioRpcError) as stopped:
+            await pb_grpc.MarketDataStub(channel).GetAccount(pb.GetAccountRequest(), timeout=2)
+    assert stopped.value.code() is grpc.StatusCode.UNAVAILABLE

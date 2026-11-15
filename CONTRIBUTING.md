@@ -71,6 +71,9 @@ client.
   by rules the release gate enforces ([docs/release.md](docs/release.md)):
   changed contract files need a higher contract version, and the release
   notes state it. `make contract` checks them.
+- `mt5_bridge.proto` is the gRPC form of the same API. After editing it, run
+  `make proto` and commit the regenerated files under
+  `src/mt5_bridge/api/grpc_api/generated/` in the same commit.
 - The version the server reports in `src/mt5_bridge/api/app.py` equals the
   contract version.
 - A commit that changes the contract uses the scope `contract`; a breaking

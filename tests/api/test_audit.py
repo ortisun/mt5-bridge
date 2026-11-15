@@ -1,5 +1,6 @@
 """AuditLog: each record is stored, is an OCSF API Activity event, and is logged."""
 
+import dataclasses
 import logging
 import sqlite3
 from datetime import UTC, datetime
@@ -59,6 +60,27 @@ def test_the_http_method_sets_the_activity(method: str, activity_id: int) -> Non
 
     assert_is_ocsf_event(event)
     assert event["activity_id"] == activity_id
+
+
+@pytest.mark.parametrize(
+    ("rpc", "activity_id"),
+    [("SubmitOrder", 1), ("AmendOrder", 3), ("CancelOrder", 4), ("RearmKillSwitch", 4)],
+)
+def test_a_grpc_record_takes_its_activity_from_the_rpc(rpc: str, activity_id: int) -> None:
+    record = dataclasses.replace(_record(method="GRPC"), path=f"/mt5_bridge.v1.Trading/{rpc}")
+
+    event: Any = record.to_ocsf()
+
+    assert_is_ocsf_event(event)
+    assert event["activity_id"] == activity_id
+    assert event["api"] == {"operation": f"mt5_bridge.v1.Trading/{rpc}"}
+    assert event["src_endpoint"] == {"ip": "10.0.0.7", "port": 5000}
+    assert "http_request" not in event
+
+
+def test_an_rpc_whose_verb_has_no_crud_meaning_is_named_after_itself() -> None:
+    assert ocsf.api_activity_for_rpc("Heartbeat") == (ocsf.ApiActivity.OTHER, "Heartbeat")
+    assert ocsf.api_activity_for_rpc("ListBars") == (ocsf.ApiActivity.READ, None)
 
 
 @pytest.mark.parametrize(

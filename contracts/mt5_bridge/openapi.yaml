@@ -6,7 +6,8 @@ info:
     REST v1 contract for the MT5 bridge (plan §114). The bridge is a thin,
     idempotent gateway between its clients and a Windows MetaTrader5 terminal:
     it has no strategy, signal, portfolio, or model of its own. This
-    document, together with ws_messages.schema.json in this directory, is
+    document, together with ws_messages.schema.json and mt5_bridge.proto
+    (the same operations over gRPC) in this directory, is
     the source of truth for both the bridge server and any client adapter;
     it lives outside both uv projects.
     Every 4xx and 5xx response is a Problem Details document (RFC 9457,

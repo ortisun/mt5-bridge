@@ -10,13 +10,17 @@ while ``resume`` starts at the caller's own ``from_seq`` — subject to
 single loop alternates between reading a client message (bounded by
 ``poll_interval``) and polling due market/execution data, so one connection
 needs no extra background task.
+
+The subscription state and the publishing rules are not tied to the socket:
+``handle_client_message`` and ``publish_once`` write to any ``MessageSink``,
+and the gRPC stream (``api.grpc_api.streaming``) runs the same two functions.
 """
 
 import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -47,7 +51,7 @@ DEFAULT_POLL_INTERVAL_SECONDS = 0.05
 # RFC 6455 §7.4.1: 1008, a message that violates the endpoint's policy; here,
 # one that is not JSON or does not match ws_messages.schema.json.
 INVALID_MESSAGE_CLOSE_CODE = 1008
-_INVALID_CLIENT_MESSAGE = (ValueError, KeyError, TypeError, AttributeError)
+INVALID_CLIENT_MESSAGE = (ValueError, KeyError, TypeError, AttributeError)
 SUBSCRIBE_OPERATION = "subscribe"
 RESUME_OPERATION = "resume"
 
@@ -68,8 +72,15 @@ def _empty_phase_map() -> dict[str, str]:
     return {}
 
 
+class MessageSink(Protocol):
+    """Where a connection's messages go: a WebSocket, or the gRPC stream,
+    which renders the same OCSF events as protobuf messages."""
+
+    async def send_json(self, data: Any) -> None: ...
+
+
 @dataclass
-class _ConnectionState:
+class ConnectionState:
     tick_poller: TickPoller = field(default_factory=TickPoller)
     tick_symbols: set[str] = field(default_factory=_empty_symbols)
     bar_poller: BarPoller = field(default_factory=BarPoller)
@@ -242,17 +253,17 @@ def _account_envelope(
     return to_wire(envelope)
 
 
-async def _handle_client_message(
-    websocket: WebSocket,
+async def handle_client_message(
+    sink: MessageSink,
     message: dict[str, Any],
-    state: _ConnectionState,
+    state: ConnectionState,
     *,
     peer: StreamPeer,
     clock: Clock,
 ) -> None:
     op = message.get("op")
     if op == "ping":
-        await websocket.send_json(pong_to_wire(peer, now=clock.now_utc()))
+        await sink.send_json(pong_to_wire(peer, now=clock.now_utc()))
         return
     channel = message.get("channel")
     if op == "subscribe":
@@ -299,7 +310,7 @@ async def _handle_client_message(
 
 
 async def _publish_market_data(
-    websocket: WebSocket, state: _ConnectionState, *, worker: BridgeWorker, clock: Clock
+    sink: MessageSink, state: ConnectionState, *, worker: BridgeWorker, clock: Clock
 ) -> None:
     if state.tick_symbols:
         symbols = tuple(state.tick_symbols)
@@ -308,7 +319,7 @@ async def _publish_market_data(
         )
         for tick in ticks:
             stream_id = f"ticks:{tick.symbol}"
-            await websocket.send_json(
+            await sink.send_json(
                 _tick_envelope(tick, seq=state.next_local_seq(stream_id), clock=clock)
             )
 
@@ -321,7 +332,7 @@ async def _publish_market_data(
         )
         for bar in bars:
             stream_id = f"bars:{bar.symbol}:{bar.timeframe.value}"
-            await websocket.send_json(
+            await sink.send_json(
                 _bar_envelope(bar, seq=state.next_local_seq(stream_id), clock=clock)
             )
 
@@ -334,14 +345,14 @@ async def _publish_market_data(
         )
         for symbol, levels in books:
             stream_id = f"book:{symbol}"
-            await websocket.send_json(
+            await sink.send_json(
                 _book_envelope(symbol, levels, seq=state.next_local_seq(stream_id), clock=clock)
             )
 
 
 async def _publish_executions(
-    websocket: WebSocket,
-    state: _ConnectionState,
+    sink: MessageSink,
+    state: ConnectionState,
     *,
     sequence_log: SequenceLog,
     peer: StreamPeer,
@@ -353,7 +364,7 @@ async def _publish_executions(
         stream="executions", from_seq=state.executions_next_seq
     )
     if result.status is ResumeStatus.RESYNC_REQUIRED:
-        await websocket.send_json(
+        await sink.send_json(
             resync_required_to_wire(
                 peer,
                 stream_id=EXECUTIONS_CHANNEL,
@@ -364,13 +375,13 @@ async def _publish_executions(
         state.executions_subscribed = False
         return
     for event in result.events:
-        await websocket.send_json(_execution_envelope(event))
+        await sink.send_json(_execution_envelope(event))
         state.executions_next_seq = event.seq + 1
 
 
 async def _publish_status(
-    websocket: WebSocket,
-    state: _ConnectionState,
+    sink: MessageSink,
+    state: ConnectionState,
     *,
     kill_switch: KillSwitch,
     terminal_watchdog_state: TerminalWatchdogState,
@@ -385,7 +396,7 @@ async def _publish_status(
     terminal_connected = terminal_watchdog_state.connected
     current = (kill_switch_state, terminal_connected)
     if current != state.last_status_sent:
-        await websocket.send_json(
+        await sink.send_json(
             _status_envelope(
                 kill_switch_state=kill_switch_state,
                 terminal_connected=terminal_connected,
@@ -422,7 +433,7 @@ async def _publish_status(
         phase = phases[symbol]
         if state.last_phase_sent.get(symbol) == phase:
             continue
-        await websocket.send_json(
+        await sink.send_json(
             _status_envelope(
                 kill_switch_state=kill_switch_state,
                 terminal_connected=terminal_connected,
@@ -436,7 +447,7 @@ async def _publish_status(
 
 
 async def _publish_account(
-    websocket: WebSocket, state: _ConnectionState, *, worker: BridgeWorker, clock: Clock
+    sink: MessageSink, state: ConnectionState, *, worker: BridgeWorker, clock: Clock
 ) -> None:
     if not state.account_subscribed:
         return
@@ -450,7 +461,7 @@ async def _publish_account(
     if snapshot == state.last_account_sent:
         return
     balance, equity, margin, margin_free = snapshot
-    await websocket.send_json(
+    await sink.send_json(
         _account_envelope(
             balance=balance,
             equity=equity,
@@ -461,6 +472,35 @@ async def _publish_account(
         )
     )
     state.last_account_sent = snapshot
+
+
+async def publish_once(
+    sink: MessageSink,
+    state: ConnectionState,
+    *,
+    peer: StreamPeer,
+    worker: BridgeWorker,
+    sequence_log: SequenceLog,
+    kill_switch: KillSwitch,
+    terminal_watchdog_state: TerminalWatchdogState,
+    trading_day_policy: TradingDayPolicy,
+    auction_window: timedelta,
+    clock: Clock,
+) -> None:
+    """One publishing pass over everything ``state`` subscribes to."""
+    await _publish_market_data(sink, state, worker=worker, clock=clock)
+    await _publish_executions(sink, state, sequence_log=sequence_log, peer=peer, clock=clock)
+    await _publish_status(
+        sink,
+        state,
+        kill_switch=kill_switch,
+        terminal_watchdog_state=terminal_watchdog_state,
+        worker=worker,
+        trading_day_policy=trading_day_policy,
+        auction_window=auction_window,
+        clock=clock,
+    )
+    await _publish_account(sink, state, worker=worker, clock=clock)
 
 
 async def run_stream_connection(
@@ -477,7 +517,7 @@ async def run_stream_connection(
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> None:
     await websocket.accept()
-    state = _ConnectionState()
+    state = ConnectionState()
     client = websocket.client
     peer = StreamPeer(
         account_id=account_id,
@@ -489,30 +529,27 @@ async def run_stream_connection(
             try:
                 raw = await asyncio.wait_for(websocket.receive_json(), timeout=poll_interval)
                 with stream_operation_span(raw):
-                    await _handle_client_message(websocket, raw, state, peer=peer, clock=clock)
+                    await handle_client_message(websocket, raw, state, peer=peer, clock=clock)
             except TimeoutError:
                 pass
-            except _INVALID_CLIENT_MESSAGE:
+            except INVALID_CLIENT_MESSAGE:
                 # The client's fault, so not the 1011 an escaping exception
                 # would produce (RFC 6455 §7.4.1: 1011 is a server failure).
                 await websocket.close(
                     code=INVALID_MESSAGE_CLOSE_CODE, reason="invalid client message"
                 )
                 return
-            await _publish_market_data(websocket, state, worker=worker, clock=clock)
-            await _publish_executions(
-                websocket, state, sequence_log=sequence_log, peer=peer, clock=clock
-            )
-            await _publish_status(
+            await publish_once(
                 websocket,
                 state,
+                peer=peer,
+                worker=worker,
+                sequence_log=sequence_log,
                 kill_switch=kill_switch,
                 terminal_watchdog_state=terminal_watchdog_state,
-                worker=worker,
                 trading_day_policy=trading_day_policy,
                 auction_window=auction_window,
                 clock=clock,
             )
-            await _publish_account(websocket, state, worker=worker, clock=clock)
     except WebSocketDisconnect:
         return

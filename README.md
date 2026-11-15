@@ -2,8 +2,9 @@
 
 A gateway between a Windows MetaTrader 5 terminal and anything that wants to
 trade or read B3 through it. It is a FastAPI service with a REST v1 API and
-one WebSocket stream, and it is the only code that imports the `MetaTrader5`
-library. Clients talk to it over HTTP and never touch the terminal.
+one WebSocket stream, optionally with the same API over gRPC, and it is the
+only code that imports the `MetaTrader5` library. Clients talk to it over
+HTTP or gRPC and never touch the terminal.
 
 The bridge has no strategy, signal or portfolio logic. It does four things:
 
@@ -27,6 +28,7 @@ server and for every client:
 | --- | --- |
 | [`contracts/mt5_bridge/openapi.yaml`](contracts/mt5_bridge/openapi.yaml) | REST v1 (OpenAPI 3.1), `info.version` `1.0.0` |
 | [`contracts/mt5_bridge/ws_messages.schema.json`](contracts/mt5_bridge/ws_messages.schema.json) | `/v1/stream` messages (JSON Schema 2020-12) |
+| [`contracts/mt5_bridge/mt5_bridge.proto`](contracts/mt5_bridge/mt5_bridge.proto) | the same operations and stream over gRPC (proto3, package `mt5_bridge.v1`) |
 
 Every message on the stream, every log line and every audit record is an
 event of the [Open Cybersecurity Schema Framework](https://schema.ocsf.io/)
@@ -38,14 +40,46 @@ Rules that hold for the contract:
   so a client cannot round one through `float`.
 - Every 4xx and 5xx response is a Problem Details document (RFC 9457,
   `application/problem+json`). [`docs/errors.md`](docs/errors.md) lists the
-  problem types.
+  problem types. A failed gRPC call reports the same problem types.
 - A change to the API changes these files first, in the same commit as the
   server code. `tests/contracts/` checks that both documents are valid and
   that real REST responses and WebSocket messages conform to them.
-- Clients depend on these two files and nothing else in this repository. A
+- The gRPC contract follows the other two: `tests/contracts/` checks that
+  every REST operation has an RPC, that every stream channel and every
+  problem type exists in it, and that the generated code under
+  `src/mt5_bridge/api/grpc_api/generated/` is what the `.proto` produces.
+  After editing the `.proto`, run `make proto`.
+- Clients depend on these files and nothing else in this repository. A
   client that keeps a copy should record the commit or tag it copied from.
 
-`info.version` follows SemVer. It is `1.0.0`.
+`info.version` follows SemVer and covers the three files. It is `1.0.0`.
+
+### gRPC
+
+gRPC is off by default. Setting `MT5_BRIDGE_GRPC_PORT` serves it on that
+port, next to the HTTP listener, in the same process: both read the same
+journal, kill switch and terminal worker, so an order submitted through one
+is visible through the other and shares its idempotency key.
+
+| Service | What it is |
+| --- | --- |
+| `mt5_bridge.v1.MarketData` | health, terminal, account, symbols, bars, ticks, book |
+| `mt5_bridge.v1.Trading` | orders, positions, history, kill switch, heartbeat |
+| `mt5_bridge.v1.Streaming` | one bidirectional call, the gRPC form of `/v1/stream` |
+
+- A failed call ends with a gRPC status and the entry
+  `mt5-bridge-problem-bin` in the trailing metadata: a serialized `Problem`
+  with the members of the REST problem document.
+  [`docs/errors.md`](docs/errors.md) lists the status of each problem type.
+- Each message of the stream is a `StreamEvent`: the OCSF event `/v1/stream`
+  sends, with the same classification, metadata and sequence numbers
+  ([`docs/ocsf.md`](docs/ocsf.md)).
+- A write call is recorded in the audit log like a REST write.
+- The listener uses the HTTP listener's certificate pair: with
+  `MT5_BRIDGE_TLS_CERTFILE` and `MT5_BRIDGE_TLS_KEYFILE` set it serves TLS,
+  otherwise plain text. `MT5_BRIDGE_GRPC_HOST` binds another address than
+  `MT5_BRIDGE_HOST`.
+- `GET /v1/metrics` has no gRPC form; Prometheus scrapes it over HTTP.
 
 ## Releases
 
@@ -60,8 +94,9 @@ files changed without a higher contract version. The procedure is in
 ## Layout
 
 ```
-contracts/mt5_bridge/   the REST and WebSocket contract
+contracts/mt5_bridge/   the REST, WebSocket and gRPC contract
 src/mt5_bridge/api/     routes, auth, WebSocket, request and response models
+src/mt5_bridge/api/grpc_api/   the gRPC services and the code generated from the .proto
 src/mt5_bridge/core/    journal, sequence log, limits, kill switch, pollers
 src/mt5_bridge/mt5/     Mt5Client protocol, fake terminal, real terminal client
 typings/MetaTrader5/    minimal type stub, so Pyright works off Windows
@@ -126,7 +161,8 @@ The API has no client authentication: whoever can reach the port can read,
 trade and rearm the kill switch. Access control is the network's job. The
 bridge binds `MT5_BRIDGE_HOST` (default `127.0.0.1`), and on the Windows
 guest the install script adds a firewall rule that admits the port only from
-the host address.
+the host address. The gRPC port, when one is set, is as open as the HTTP
+port and is not covered by that rule: admit it the same way.
 
 Traces, metrics and logs go through OpenTelemetry. Metrics are always served
 at `GET /v1/metrics`; nothing is sent to a collector until the standard

@@ -1,7 +1,7 @@
 # OCSF mapping
 
-Every JSON log line, every audit record and every message on `/v1/stream` is
-an event of the [Open Cybersecurity Schema Framework](https://schema.ocsf.io/),
+Every JSON log line, every audit record and every message on `/v1/stream` or
+on the gRPC `Stream` call is an event of the [Open Cybersecurity Schema Framework](https://schema.ocsf.io/),
 schema version **1.9.0** (the stable version the site served on 2026-11-15).
 
 - The vocabulary (version, class and category ids and names, activities,
@@ -17,6 +17,9 @@ schema version **1.9.0** (the stable version the site served on 2026-11-15).
   false`, so an attribute OCSF does not define fails the tests.
 - The WebSocket shapes are part of the contract:
   [`contracts/mt5_bridge/ws_messages.schema.json`](../contracts/mt5_bridge/ws_messages.schema.json).
+  So is the gRPC form of the same events, `StreamEvent` in
+  [`contracts/mt5_bridge/mt5_bridge.proto`](../contracts/mt5_bridge/mt5_bridge.proto);
+  see [gRPC stream messages](#grpc-stream-messages).
 
 ## Classes in use
 
@@ -125,6 +128,32 @@ The bridge does not identify its callers. API Activity requires an `actor`,
 so the actor is the terminal account the request acts on; the caller is
 described only by `src_endpoint`.
 
+### gRPC calls
+
+A gRPC write call is audited at the same point as its REST counterpart, with
+the same `account_id`, `outcome`, peer address and status rules. What
+differs is how the call is named:
+
+| Field of the record | Value | OCSF attribute |
+| --- | --- | --- |
+| `method` | `GRPC` | none; there is no `http_request` |
+| `path` | `/mt5_bridge.v1.Trading/SubmitOrder` | `api.operation`, without the leading slash |
+| (the RPC's name) | | `activity_id`, from its leading verb, below |
+| `payload_hash` | SHA-256 of the request message, serialized deterministically; none for a request without fields | `unmapped.payload_hash` |
+| `src_host`, `src_port` | parsed from the gRPC peer (`ipv4:10.0.0.7:5000`) | `src_endpoint` |
+
+Every gRPC call is an HTTP POST, so the method cannot set the activity. The
+leading verb of the RPC does, and a test checks that each RPC gets the
+activity of the REST operation it mirrors:
+
+| Verb | `activity_id` | RPCs audited |
+| --- | --- | --- |
+| `Submit`, `Replace`, `Reconcile`, `Activate` | 1 Create | `SubmitOrder`, `ReplaceOrder`, `ReconcileOrder`, `ActivateKillSwitch` |
+| `Amend` | 3 Update | `AmendOrder` |
+| `Cancel`, `Rearm` | 4 Delete | `CancelOrder`, `RearmKillSwitch` |
+| `Get`, `List`, `Check` | 2 Read | none: reads are not audited |
+| any other | 99, named after the RPC | none |
+
 ## WebSocket messages
 
 A client dispatches on `metadata.event_code`: a channel name, `pong` or
@@ -192,6 +221,46 @@ is under `unmapped.payload`.
 the terminal account, `src_endpoint` the connection's peer.
 `RESYNC_REQUIRED` also has `status_code` `RESYNC_REQUIRED`, a
 `status_detail`, `severity_id` 3 and the stream id in `metadata.log_name`.
+
+## gRPC stream messages
+
+The `Stream` call of `mt5_bridge.v1.Streaming` carries the same events. The
+bridge builds one OCSF event per message, as above, and renders it either as
+JSON on the WebSocket or as a `StreamEvent`; the classification, the
+severity, the status, the metadata and the sequence numbers are therefore the
+same on both, and a client dispatches on `metadata.event_code` in both.
+
+The fields of `StreamEvent` have the names of the OCSF attributes:
+
+| OCSF attribute on `/v1/stream` | `StreamEvent` field |
+| --- | --- |
+| `class_uid`, `category_uid`, `activity_id`, `type_uid`, `activity_name` | the same names |
+| `time`, `severity_id` | the same names |
+| `status_id`, `status_code`, `status_detail`, `message` | the same names, absent where the JSON has none |
+| `metadata.version`, `metadata.product`, `metadata.event_code` | `metadata.version`, `metadata.product`, `metadata.event_code` |
+| `metadata.log_name`, `metadata.sequence`, `metadata.original_time`, `metadata.processed_time`, `metadata.uid`, `metadata.correlation_uid` | the same names under `metadata`, absent where the JSON has none |
+| `api.operation`, `actor.user`, `src_endpoint` (control replies) | `api.operation`, `actor.user`, `src_endpoint` |
+| `unmapped.source_time_unit`, `unmapped.time_basis` | `source_time_unit`, `time_basis` (enums; unspecified on a control reply) |
+| `unmapped.payload` (`ticks`, `bars`, `book`, `account`, `status`) | the `payload` oneof: `tick`, `bar`, `book`, `account`, `status` |
+| `entity.data` (`executions`) | the `payload` oneof: `execution` |
+
+What the protobuf form leaves out, and why:
+
+- The captions `class_name`, `category_name`, `type_name`, `severity` and
+  `status`. Each repeats an identifier that is present.
+- `entity.type_id`, `entity.type` and `entity.uid` of an execution: constant,
+  or equal to `execution.client_order_id` and `metadata.correlation_uid`.
+- `app` of a status message: it is `metadata.product`.
+
+The payload is typed, not JSON in a string: decimals stay strings, and the
+order state, kill-switch state, trading phase, timeframe and book side are
+the enums the unary calls use. There is no `unmapped` member, so nothing of
+the protobuf form sits outside its schema.
+
+Sequencing is the WebSocket's: `executions` is durable and resumable by
+`metadata.sequence` through the `resume` operation, the other streams count
+per call, and `RESYNC_REQUIRED` is an API Activity event with no payload.
+The source endpoint of a control reply is the gRPC peer.
 
 ## Where the fit is weak
 

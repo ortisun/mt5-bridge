@@ -150,6 +150,7 @@ Copy `app\deploy\bridge.env.example` to
 | `MT5_BRIDGE_EXPECTED_LOGIN`, `MT5_BRIDGE_EXPECTED_SERVER` | the account and server the terminal is logged in to; boot refuses any other |
 | `MT5_BRIDGE_POSITION_ACCOUNTING` | `NETTING`; boot refuses a hedging account |
 | `MT5_BRIDGE_HOST`, `MT5_BRIDGE_PORT` | the guest address and the port (8765) |
+| `MT5_BRIDGE_GRPC_PORT` | optional: the port of the gRPC API (for example 8766); unset serves no gRPC. The firewall rule the install script adds covers only the HTTP port |
 | `MT5_BRIDGE_TLS_CERTFILE`, `MT5_BRIDGE_TLS_KEYFILE` | the files from step 5, or remove both lines for plain HTTP |
 | `MT5_BRIDGE_TERMINAL_TIME_ZONE` | `America/Sao_Paulo` when the terminal reports its server's wall clock as epochs (true for Rico demo); unset for a terminal that reports UTC |
 

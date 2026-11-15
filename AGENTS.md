@@ -13,7 +13,8 @@ runbook is [docs/runbook.md](docs/runbook.md).
   every test runs against the deterministic fake terminal in `mt5/fake_client.py`. The real client
   cannot be tested here: no Windows host or terminal is available outside the guest.
 - An API change edits `contracts/mt5_bridge/` in the same commit as the server code; the tests in
-  `tests/contracts/` must keep passing.
+  `tests/contracts/` must keep passing. A change to `mt5_bridge.proto` also needs `make proto`,
+  which rewrites `src/mt5_bridge/api/grpc_api/generated/`; never edit that directory by hand.
 - Do not change UTM, start a terminal or place live credentials in code or tests.
 - Credentials come from environment variables set on the machine (`MT5_BRIDGE_LOGIN`,
   `MT5_BRIDGE_PASSWORD`, `MT5_BRIDGE_SERVER`), never from a file in this repository. The API has

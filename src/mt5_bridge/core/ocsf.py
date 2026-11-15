@@ -18,6 +18,7 @@ framework and no I/O.
 from __future__ import annotations
 
 import ipaddress
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -407,6 +408,47 @@ def api_activity_for_method(method: str) -> tuple[ApiActivity, str | None]:
     if activity is None:
         return ApiActivity.OTHER, method.upper()
     return activity, None
+
+
+# The leading verb of an RPC name as an API Activity, the gRPC counterpart of
+# the HTTP method table above: every gRPC call is an HTTP POST, so the method
+# says nothing about what the call does.
+_ACTIVITY_BY_RPC_VERB: Mapping[str, ApiActivity] = {
+    "Submit": ApiActivity.CREATE,
+    "Replace": ApiActivity.CREATE,
+    "Reconcile": ApiActivity.CREATE,
+    "Activate": ApiActivity.CREATE,
+    "Get": ApiActivity.READ,
+    "List": ApiActivity.READ,
+    "Check": ApiActivity.READ,
+    "Amend": ApiActivity.UPDATE,
+    "Cancel": ApiActivity.DELETE,
+    "Rearm": ApiActivity.DELETE,
+}
+_RPC_VERB = re.compile(r"[A-Z][a-z0-9]*")
+
+
+def api_activity_for_rpc(rpc: str) -> tuple[ApiActivity, str | None]:
+    """An RPC name (``CancelOrder``) as an API Activity ``(activity,
+    activity_name)``; a verb with no CRUD meaning is activity 99 named after
+    the RPC."""
+    verb = _RPC_VERB.match(rpc)
+    activity = _ACTIVITY_BY_RPC_VERB.get(verb.group()) if verb else None
+    if activity is None:
+        return ApiActivity.OTHER, rpc
+    return activity, None
+
+
+def rpc_call_attributes(
+    *, account_id: str | None, method: str, src_host: str | None, src_port: int | None
+) -> dict[str, object]:
+    """The API Activity attributes of one gRPC call; ``method`` is the full
+    method name, ``<package>.<Service>/<Method>``."""
+    return {
+        "actor": actor(account_id),
+        "api": api(method),
+        "src_endpoint": network_endpoint(src_host, src_port),
+    }
 
 
 def api_call_attributes(

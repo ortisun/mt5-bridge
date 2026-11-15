@@ -1,5 +1,5 @@
-"""FastAPI REST routes, the WebSocket endpoint, auth, and the audit log.
+"""FastAPI REST routes, the WebSocket endpoint, the gRPC services, auth, and the audit log.
 
-The only layer allowed to import FastAPI/Pydantic/Starlette in this project;
+The only layer allowed to import FastAPI, Pydantic, Starlette or gRPC in this project;
 ``core`` stays framework-free.
 """

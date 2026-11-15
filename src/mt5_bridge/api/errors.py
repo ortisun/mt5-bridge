@@ -6,6 +6,10 @@ and the bridge's own extension members ``code``, ``retryable``,
 ``mt5_retcode`` and ``mt5_last_error`` (plan §114); a validation problem also
 carries ``errors``. The catalogue below is the single source of every problem
 type; ``docs/errors.md`` lists the same types for clients.
+
+The gRPC API reports the same problems: each type names the gRPC status a
+failed call ends with (``grpc_status``), and ``api.grpc_api.calls`` sends the
+same members in a ``Problem`` message.
 """
 
 import json
@@ -40,12 +44,14 @@ ABOUT_BLANK = "about:blank"
 
 @dataclass(frozen=True, slots=True)
 class ProblemType:
-    """One kind of error: its type URI, title, default status and ``code``."""
+    """One kind of error: its type URI, title, HTTP status, ``code`` and the
+    gRPC status code (by name, as in ``grpc.StatusCode``) of the same error."""
 
     slug: str
     title: str
     status: int
     code: str
+    grpc_status: str
     retryable: bool = False
     # RFC 9110 §10.2.3: sent as ``Retry-After`` (seconds) when set.
     retry_after_seconds: int | None = None
@@ -55,30 +61,38 @@ class ProblemType:
         return f"{PROBLEM_TYPE_PREFIX}{self.slug}"
 
 
-SYMBOL_NOT_FOUND = ProblemType("symbol-not-found", "Unknown symbol", 404, "NotFound")
-ORDER_NOT_FOUND = ProblemType("order-not-found", "Unknown order", 404, "OrderNotFound")
+SYMBOL_NOT_FOUND = ProblemType("symbol-not-found", "Unknown symbol", 404, "NotFound", "NOT_FOUND")
+ORDER_NOT_FOUND = ProblemType("order-not-found", "Unknown order", 404, "OrderNotFound", "NOT_FOUND")
 IDEMPOTENCY_CONFLICT = ProblemType(
-    "idempotency-conflict", "Idempotency key reused", 409, "IdempotencyConflict"
+    "idempotency-conflict", "Idempotency key reused", 409, "IdempotencyConflict", "ALREADY_EXISTS"
 )
 ORDER_STATE_CONFLICT = ProblemType(
-    "order-state-conflict", "Order state does not allow this", 409, "OrderStateConflict"
+    "order-state-conflict",
+    "Order state does not allow this",
+    409,
+    "OrderStateConflict",
+    "FAILED_PRECONDITION",
 )
 UNSUPPORTED_VENUE_CAPABILITY = ProblemType(
     "unsupported-venue-capability",
     "Unsupported venue capability",
     409,
     "UnsupportedVenueCapability",
+    "FAILED_PRECONDITION",
 )
 PAYLOAD_TOO_LARGE = ProblemType(
-    "payload-too-large", "Request body too large", 413, "PayloadTooLarge"
+    "payload-too-large", "Request body too large", 413, "PayloadTooLarge", "RESOURCE_EXHAUSTED"
 )
-VALIDATION_ERROR = ProblemType("validation-error", "Invalid request", 422, "ValidationError")
-INTERNAL_ERROR = ProblemType("internal-error", "Internal error", 500, "InternalError")
+VALIDATION_ERROR = ProblemType(
+    "validation-error", "Invalid request", 422, "ValidationError", "INVALID_ARGUMENT"
+)
+INTERNAL_ERROR = ProblemType("internal-error", "Internal error", 500, "InternalError", "INTERNAL")
 WORKER_UNAVAILABLE = ProblemType(
     "worker-unavailable",
     "Bridge worker unavailable",
     503,
     "WorkerUnavailable",
+    "UNAVAILABLE",
     retryable=True,
     retry_after_seconds=1,
 )
@@ -87,6 +101,7 @@ TERMINAL_UNAVAILABLE = ProblemType(
     "Terminal unavailable",
     503,
     "TerminalUnavailable",
+    "UNAVAILABLE",
     retryable=True,
     retry_after_seconds=5,
 )
@@ -95,6 +110,7 @@ CLOCK_DRIFT_EXCEEDED = ProblemType(
     "Clock drift exceeds the threshold",
     503,
     "ClockDriftExceeded",
+    "UNAVAILABLE",
     retryable=True,
     retry_after_seconds=60,
 )
@@ -128,7 +144,7 @@ _EXCEPTION_PROBLEMS: tuple[tuple[type[Exception], ProblemType], ...] = (
     (ClockDriftExceeded, CLOCK_DRIFT_EXCEEDED),
 )
 
-_INTERNAL_ERROR_DETAIL = "the bridge could not process the request; the cause is in its log"
+INTERNAL_ERROR_DETAIL = "the bridge could not process the request; the cause is in its log"
 
 
 class ProblemError(Exception):
@@ -145,6 +161,15 @@ class ProblemError(Exception):
         self.problem_type = problem_type
         self.detail = detail
         self.errors = errors
+
+
+def problem_for(error: Exception) -> ProblemType | None:
+    """The catalogue problem a service exception is reported as, or ``None``
+    for an exception the catalogue does not name (an internal error)."""
+    for exception_class, problem_type in _EXCEPTION_PROBLEMS:
+        if isinstance(error, exception_class):
+            return problem_type
+    return None
 
 
 def problem_body(
@@ -331,6 +356,4 @@ async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResp
     exception: its text may hold a secret or an internal path. Starlette
     re-raises it after this response, so the server still logs the traceback."""
     del exc
-    return problem_response(
-        INTERNAL_ERROR, detail=_INTERNAL_ERROR_DETAIL, instance=request.url.path
-    )
+    return problem_response(INTERNAL_ERROR, detail=INTERNAL_ERROR_DETAIL, instance=request.url.path)

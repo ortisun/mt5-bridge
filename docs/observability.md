@@ -128,13 +128,17 @@ and the failure is logged on the console only.
 A client that sends a W3C Trace Context header
 ([`traceparent`](https://www.w3.org/TR/trace-context/), optionally
 `tracestate`) gets its request recorded as a child of its own span.
-Without the header each request starts a new trace.
+Without the header each request starts a new trace. A gRPC client sends the
+same two names as metadata entries of the call.
 
 | Span | Kind | Where | Notes |
 | --- | --- | --- | --- |
 | `{METHOD} {route}`, e.g. `POST /v1/orders` | server | every HTTP request except `/v1/health` and `/v1/metrics` | HTTP semantic conventions: `http.request.method`, `http.route`, `url.path`, `url.scheme`, `http.response.status_code`, `server.address`, `server.port`, `network.protocol.version`, `user_agent.original`. Error status on a 5xx answer or an unhandled exception; a 4xx is not an error |
 | `GET /v1/stream` | server | one per WebSocket connection, from handshake to disconnect | `network.protocol.name=websocket`, `mt5_bridge.ws.accepted`, `mt5_bridge.ws.close_code`, `mt5_bridge.ws.messages_sent`, `mt5_bridge.ws.messages_received`. Exported when the connection closes |
 | `mt5_bridge.ws.subscribe`, `mt5_bridge.ws.unsubscribe`, `mt5_bridge.ws.resume` | internal | one per client stream operation, child of the connection span | `mt5_bridge.ws.operation`, `mt5_bridge.ws.channel`, `mt5_bridge.ws.symbol_count` |
+| `{service}/{method}`, e.g. `mt5_bridge.v1.Trading/SubmitOrder` | server | every unary gRPC call except `GetHealth` | RPC semantic conventions: `rpc.system.name` (`grpc`), `rpc.method`, `rpc.response.status_code` (the status name, `OK` included), `server.address`, `server.port`, `user_agent.original`. Error status and `error.type` when the call ends `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE` or `DATA_LOSS`; any other status is not an error |
+| `mt5_bridge.v1.Streaming/Stream` | server | one per gRPC `Stream` call, from its start to its end | the attributes above, `mt5_bridge.grpc.messages_sent`, `mt5_bridge.grpc.messages_received`. A call the client ends has the status `CANCELLED`. Exported when the call ends |
+| `mt5_bridge.grpc.subscribe`, `mt5_bridge.grpc.unsubscribe`, `mt5_bridge.grpc.resume` | internal | one per client operation on a gRPC stream, child of the call's span | `mt5_bridge.grpc.operation`, `mt5_bridge.grpc.channel`, `mt5_bridge.grpc.symbol_count` |
 | `mt5_bridge.order.submit` | internal | `OrderService.submit_order` | `mt5_bridge.order.client_order_id`, `.symbol`, `.side`, `.order_type`, `.time_in_force`, `.state`, `.replayed`. Error status when the order ends `UNKNOWN` |
 | `mt5_bridge.order.cancel`, `mt5_bridge.order.amend`, `mt5_bridge.order.reconcile` | internal | the matching `OrderService` method | `mt5_bridge.order.client_order_id` |
 | `mt5_bridge.order.replace` | internal | `OrderService.replace_order` | `mt5_bridge.order.operation_id`, `.original_client_order_id`, `.new_client_order_id` |
@@ -154,19 +158,22 @@ trace before they are recorded.
 
 ### What is not traced, on purpose
 
-- `/v1/health` and `/v1/metrics`: they are polled; a span each would be
-  noise. They are still counted in the HTTP metrics.
-- Market-data messages on the WebSocket and the polls that produce them. A
-  connection is one span however many ticks, bars or book snapshots it
-  carries. The connection span is not the active span while the connection
-  runs, so log lines written from the stream loop carry no trace id.
+- `/v1/health` and `/v1/metrics`, and the gRPC call `GetHealth`: they are
+  polled; a span each would be noise. They are still counted in the HTTP
+  and RPC metrics.
+- Market-data messages on the WebSocket or on a gRPC stream, and the polls
+  that produce them. A connection or a `Stream` call is one span however
+  many ticks, bars or book snapshots it carries. That span is not the active
+  span while the stream runs, so log lines written from the stream loop
+  carry no trace id.
 - The background loops: execution polling, the dead-man sweep, the clock
   drift probe, the equity snapshot and the terminal watchdog. Their terminal
   calls create no span because no trace is active. The exception is the
   dead-man sweep when it fires: its `mt5_bridge.order.cancel_all` is a trace
   of its own.
 - Request and response bodies, request headers other than `User-Agent`,
-  query strings and the client address.
+  query strings and the client address. For gRPC: the messages, the metadata
+  other than `user-agent`, and the peer.
 - Prices, volumes, balances, account numbers and the terminal credentials.
 
 ## Metrics
@@ -181,6 +188,8 @@ rewrites the names: dots become underscores and the unit is appended
 | `http.server.request.duration` | histogram, seconds | `http.request.method`, `http.route`, `http.response.status_code`, `url.scheme`, `error.type` |
 | `http.server.active_requests` | up-down counter | `http.request.method`, `url.scheme` |
 | `mt5_bridge.ws.active_connections` | up-down counter | none |
+| `rpc.server.call.duration` | histogram, seconds | `rpc.system.name`, `rpc.method`, `rpc.response.status_code`, `error.type` |
+| `mt5_bridge.grpc.active_streams` | up-down counter | none |
 | `mt5_bridge.order.submit_ack.duration` | histogram, seconds | `symbol` |
 | `mt5_bridge.order.rejected` | counter | `reason`, `symbol` |
 | `mt5_bridge.order.unknown` | counter | `symbol` |
@@ -191,8 +200,8 @@ rewrites the names: dots become underscores and the unit is appended
 | `mt5_bridge.clock_drift.seconds` | gauge | none |
 | `mt5_bridge.poll.tick_latency`, `mt5_bridge.poll.bar_latency`, `mt5_bridge.poll.execution_latency` | gauge, seconds | none |
 
-The first three are new with the tracing work; the names of the others did
-not change.
+The first three are new with the tracing work and the two after them belong
+to the gRPC server; the names of the others did not change.
 
 ## Logs
 
@@ -231,3 +240,13 @@ The server spans come from a small ASGI middleware,
 
 The cost is that the HTTP attribute names are written by hand; they follow
 the stable HTTP semantic conventions.
+
+The gRPC server is instrumented the same way, in
+[`api/grpc_api/telemetry.py`](../src/mt5_bridge/api/grpc_api/telemetry.py),
+and for the same reasons: `opentelemetry-instrumentation-grpc` is
+pre-release and adds pinned dependencies. The
+handlers of the three services already pass through one wrapper for the
+error mapping; the span and the duration are taken there, with the span
+helpers of `core/tracing.py`. A call the gRPC library answers by itself (an
+unknown method, an oversized message) never reaches a handler and has no
+span.

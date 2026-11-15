@@ -6,7 +6,8 @@ Every 4xx and 5xx response of the REST API is a Problem Details document
 [`contracts/mt5_bridge/openapi.yaml`](../contracts/mt5_bridge/openapi.yaml);
 the catalogue of types is `CATALOGUE` in
 [`src/mt5_bridge/api/errors.py`](../src/mt5_bridge/api/errors.py), and a test
-fails when the table below and that catalogue disagree.
+fails when the table below and that catalogue disagree. The gRPC API reports
+the same problem types; see [gRPC](#grpc).
 
 ## Example
 
@@ -83,19 +84,19 @@ host name, so a URL would name a host nobody controls; RFC 9457 §3.1.1 allows
 a type that cannot be dereferenced. `mt5-bridge` is not a URN namespace
 registered with IANA: the string is an identifier private to this API.
 
-| Type | Status | `code` | Retryable | When |
-| --- | --- | --- | --- | --- |
-| `urn:mt5-bridge:problem:symbol-not-found` | 404 | `NotFound` | no | The terminal does not know the symbol. |
-| `urn:mt5-bridge:problem:order-not-found` | 404 | `OrderNotFound` | no | No journal entry has this `client_order_id`. |
-| `urn:mt5-bridge:problem:idempotency-conflict` | 409 | `IdempotencyConflict` | no | A `client_order_id` or `operation_id` was reused with a different payload. |
-| `urn:mt5-bridge:problem:order-state-conflict` | 409 | `OrderStateConflict` | no | The order's state does not allow an amend or a reconcile. |
-| `urn:mt5-bridge:problem:unsupported-venue-capability` | 409 | `UnsupportedVenueCapability` | no | The symbol advertises no filling mode the bridge supports. |
-| `urn:mt5-bridge:problem:payload-too-large` | 413 | `PayloadTooLarge` | no | The body exceeds `MT5_BRIDGE_MAX_REQUEST_BODY_BYTES`. |
-| `urn:mt5-bridge:problem:validation-error` | 422 | `ValidationError` | no | A body, query or path value is invalid. Carries `errors`. |
-| `urn:mt5-bridge:problem:internal-error` | 500 | `InternalError` | no | The bridge failed. The body never quotes the cause; it is in the bridge log. |
-| `urn:mt5-bridge:problem:worker-unavailable` | 503 | `WorkerUnavailable` | yes, after 1 s | The worker queue is saturated or the worker stopped. The terminal never saw the command. |
-| `urn:mt5-bridge:problem:terminal-unavailable` | 503 | `TerminalUnavailable` | yes, after 5 s | The terminal is not connected. |
-| `urn:mt5-bridge:problem:clock-drift-exceeded` | 503 | `ClockDriftExceeded` | yes, after 60 s | A cancel-replace was refused because the clock drift is over its threshold. Nothing was journaled. |
+| Type | Status | `code` | gRPC status | Retryable | When |
+| --- | --- | --- | --- | --- | --- |
+| `urn:mt5-bridge:problem:symbol-not-found` | 404 | `NotFound` | `NOT_FOUND` | no | The terminal does not know the symbol. |
+| `urn:mt5-bridge:problem:order-not-found` | 404 | `OrderNotFound` | `NOT_FOUND` | no | No journal entry has this `client_order_id`. |
+| `urn:mt5-bridge:problem:idempotency-conflict` | 409 | `IdempotencyConflict` | `ALREADY_EXISTS` | no | A `client_order_id` or `operation_id` was reused with a different payload. |
+| `urn:mt5-bridge:problem:order-state-conflict` | 409 | `OrderStateConflict` | `FAILED_PRECONDITION` | no | The order's state does not allow an amend or a reconcile. |
+| `urn:mt5-bridge:problem:unsupported-venue-capability` | 409 | `UnsupportedVenueCapability` | `FAILED_PRECONDITION` | no | The symbol advertises no filling mode the bridge supports. |
+| `urn:mt5-bridge:problem:payload-too-large` | 413 | `PayloadTooLarge` | `RESOURCE_EXHAUSTED` | no | The body exceeds `MT5_BRIDGE_MAX_REQUEST_BODY_BYTES`. |
+| `urn:mt5-bridge:problem:validation-error` | 422 | `ValidationError` | `INVALID_ARGUMENT` | no | A body, query or path value is invalid. Carries `errors`. |
+| `urn:mt5-bridge:problem:internal-error` | 500 | `InternalError` | `INTERNAL` | no | The bridge failed. The body never quotes the cause; it is in the bridge log. |
+| `urn:mt5-bridge:problem:worker-unavailable` | 503 | `WorkerUnavailable` | `UNAVAILABLE` | yes, after 1 s | The worker queue is saturated or the worker stopped. The terminal never saw the command. |
+| `urn:mt5-bridge:problem:terminal-unavailable` | 503 | `TerminalUnavailable` | `UNAVAILABLE` | yes, after 5 s | The terminal is not connected. |
+| `urn:mt5-bridge:problem:clock-drift-exceeded` | 503 | `ClockDriftExceeded` | `UNAVAILABLE` | yes, after 60 s | A cancel-replace was refused because the clock drift is over its threshold. Nothing was journaled. |
 
 A status raised by the HTTP layer with nothing to add (an unknown path, a
 method the path does not allow) has the type `about:blank`, the status
@@ -107,6 +108,47 @@ phrase as `title`, and the `code` `error` (RFC 9457 §4.2.1).
 | --- | --- | --- |
 | 405 | `Allow` | [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) §15.5.6. |
 | 503 | `Retry-After: <seconds>` | RFC 9110 §10.2.3. The value is the type's, from the table above. |
+
+## gRPC
+
+A failed call ends with the gRPC status of its problem type, from the table
+above. The status message is the problem's `detail`, and the trailing
+metadata entry `mt5-bridge-problem-bin` holds a serialized `Problem` message
+([`mt5_bridge.proto`](../contracts/mt5_bridge/mt5_bridge.proto)):
+
+| `Problem` field | Meaning |
+| --- | --- |
+| `type`, `title`, `detail`, `code`, `retryable`, `mt5_retcode`, `mt5_last_error` | as in the REST document; the two `mt5_*` fields are absent where REST has `null` |
+| `instance` | the method that failed, `/mt5_bridge.v1.Trading/SubmitOrder` |
+| `retry_after_seconds` | on a retryable problem, the value REST sends as `Retry-After` |
+| `errors` | only on a validation problem: one `{ field, detail }` per invalid value, `field` being the name of the request field |
+
+The REST member `status` has no field: the status of a gRPC call is the
+call's own. The same catalogue decides both, so a client can switch on
+`type` or `code` whichever transport it uses.
+
+```
+status:  UNAVAILABLE
+message: terminal is not connected
+mt5-bridge-problem-bin:
+  type: "urn:mt5-bridge:problem:terminal-unavailable"
+  title: "Terminal unavailable"
+  detail: "terminal is not connected"
+  instance: "/mt5_bridge.v1.MarketData/GetAccount"
+  code: "TerminalUnavailable"
+  retryable: true
+  retry_after_seconds: 5
+```
+
+- A rejection by the trade server is not a failed call: `SubmitOrder`
+  succeeds with an order whose `state` is `ORDER_STATE_REJECTED`.
+- On the `Stream` call an invalid client message ends the call with the
+  validation problem, and a failure inside the bridge with the internal
+  error. `RESYNC_REQUIRED` is a message of the stream, as on the WebSocket.
+- A status the gRPC library raises itself carries no `Problem`: `UNIMPLEMENTED`
+  for an unknown method, `RESOURCE_EXHAUSTED` for a request larger than
+  `MT5_BRIDGE_MAX_REQUEST_BODY_BYTES`, `CANCELLED` and `DEADLINE_EXCEEDED`
+  when the client gives up.
 
 ## WebSocket
 

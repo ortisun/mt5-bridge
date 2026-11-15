@@ -28,7 +28,7 @@ client ``subscribe``/``unsubscribe``/``resume`` gets a short child span
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from time import perf_counter
@@ -69,15 +69,21 @@ _PROPAGATOR = TraceContextTextMapPropagator()
 _connection_span: ContextVar[Span | None] = ContextVar("mt5_bridge_ws_span", default=None)
 
 
+def trace_context(carrier: Mapping[str, str]) -> Context:
+    """The caller's W3C Trace Context from ``traceparent`` and ``tracestate``,
+    or an empty context (a new trace). The gRPC server reads the same two
+    entries from the call's metadata (``api.grpc_api.telemetry``)."""
+    return _PROPAGATOR.extract(carrier, context=Context())
+
+
 def _extract_trace_context(scope: Scope) -> Context:
-    """The caller's W3C Trace Context, or an empty context (a new trace)."""
     carrier: dict[str, str] = {}
     for raw_name, raw_value in scope.get("headers", ()):
         name = raw_name.lower()
         if name in _TRACE_HEADERS:
             key, value = name.decode("ascii"), raw_value.decode("latin-1")
             carrier[key] = f"{carrier[key]},{value}" if key in carrier else value
-    return _PROPAGATOR.extract(carrier, context=Context())
+    return trace_context(carrier)
 
 
 def _header(scope: Scope, wanted: bytes) -> str | None:
@@ -275,24 +281,29 @@ def _set_close_code(current: Span, code: object) -> None:
 
 
 @contextmanager
-def stream_operation_span(message: Any) -> Generator[None]:
+def stream_operation_span(
+    message: Any, *, connection: Span | None = None, namespace: str = "mt5_bridge.ws"
+) -> Generator[None]:
     """A child span of the connection span around one client stream operation
     (``subscribe``, ``unsubscribe``, ``resume``). Anything else -- a ``ping``,
-    a malformed message, a connection with no span -- runs untraced."""
-    connection = _connection_span.get()
+    a malformed message, a connection with no span -- runs untraced.
+
+    The WebSocket connection's span is found by itself; the gRPC stream
+    passes its call span as ``connection`` and its own ``namespace``."""
+    connection = connection or _connection_span.get()
     operation = _field(message, "op")
     if connection is None or operation not in _STREAM_OPERATIONS:
         yield
         return
-    attributes: dict[str, AttributeValue] = {"mt5_bridge.ws.operation": operation}
+    attributes: dict[str, AttributeValue] = {f"{namespace}.operation": operation}
     channel = _field(message, "channel")
     if channel is not None:
-        attributes["mt5_bridge.ws.channel"] = channel
+        attributes[f"{namespace}.channel"] = channel
     symbols: object = message.get("symbols")
     if isinstance(symbols, list):
-        attributes["mt5_bridge.ws.symbol_count"] = len(cast("list[object]", symbols))
+        attributes[f"{namespace}.symbol_count"] = len(cast("list[object]", symbols))
     with span(
-        f"mt5_bridge.ws.{operation}",
+        f"{namespace}.{operation}",
         attributes=attributes,
         context=trace.set_span_in_context(connection, Context()),
     ):
@@ -313,4 +324,5 @@ __all__ = [
     "WS_ACTIVE_CONNECTIONS_METRIC",
     "TelemetryMiddleware",
     "stream_operation_span",
+    "trace_context",
 ]

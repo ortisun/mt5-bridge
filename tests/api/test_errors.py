@@ -41,11 +41,14 @@ class TestCatalogue:
         for problem in CATALOGUE:
             assert (problem.retry_after_seconds is not None) == problem.retryable, problem.slug
 
-    def test_the_documentation_lists_every_type_with_its_status_and_code(self) -> None:
+    def test_the_documentation_lists_every_type_with_its_statuses_and_code(self) -> None:
         documented = ERRORS_DOC.read_text(encoding="utf-8")
 
         for problem in CATALOGUE:
-            row = f"| `{problem.uri}` | {problem.status} | `{problem.code}` |"
+            row = (
+                f"| `{problem.uri}` | {problem.status} | `{problem.code}` "
+                f"| `{problem.grpc_status}` |"
+            )
             assert row in documented, f"docs/errors.md lacks the row {row}"
 
 

@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket
 from mt5_bridge.api.app_state import AppState
 from mt5_bridge.api.background import start_background_loops
 from mt5_bridge.api.errors import install_error_handlers
+from mt5_bridge.api.grpc_api.server import GrpcServeOptions, start_grpc_server
 from mt5_bridge.api.middleware import MaxBodySizeMiddleware
 from mt5_bridge.api.routes_market import router as market_router
 from mt5_bridge.api.routes_metrics import router as metrics_router
@@ -23,6 +24,7 @@ def create_app(
     *,
     start_background_loops_on_startup: bool = False,
     drift_probe: ClockDriftProbe | None = None,
+    grpc_options: GrpcServeOptions | None = None,
 ) -> FastAPI:
     """``start_background_loops_on_startup`` is ``False`` by default so every
     existing test app stays free of real timers, real NTP calls, and a
@@ -32,10 +34,20 @@ def create_app(
     instead — deterministic, and still through this same running app. A test
     that instead exercises the *scheduler* itself passes a fake
     ``drift_probe`` so the clock-drift loop never performs real network I/O.
+
+    ``grpc_options`` also serves the gRPC form of this API
+    (``api.grpc_api``) on its own port for as long as the app runs; ``None``
+    (the default) serves no gRPC at all.
     """
     lifespan = (
-        _lifespan(state, drift_probe or (lambda: ntp_drift_probe(state.clock)))
-        if start_background_loops_on_startup
+        _lifespan(
+            state,
+            (drift_probe or (lambda: ntp_drift_probe(state.clock)))
+            if start_background_loops_on_startup
+            else None,
+            grpc_options,
+        )
+        if start_background_loops_on_startup or grpc_options is not None
         else None
     )
     app = FastAPI(title="mt5-bridge", version="1.0.0", lifespan=lifespan)
@@ -68,14 +80,26 @@ def create_app(
 
 
 def _lifespan(
-    state: AppState, drift_probe: ClockDriftProbe
+    state: AppState, drift_probe: ClockDriftProbe | None, grpc_options: GrpcServeOptions | None
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-        loops = start_background_loops(state, drift_probe=drift_probe)
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        loops = (
+            start_background_loops(state, drift_probe=drift_probe)
+            if drift_probe is not None
+            else None
+        )
+        grpc_server = (
+            await start_grpc_server(state, grpc_options) if grpc_options is not None else None
+        )
+        # The bound port, for a caller that asked for port 0.
+        app.state.grpc_port = grpc_server.port if grpc_server is not None else None
         try:
             yield
         finally:
-            await loops.stop()
+            if grpc_server is not None:
+                await grpc_server.stop()
+            if loops is not None:
+                await loops.stop()
 
     return lifespan
