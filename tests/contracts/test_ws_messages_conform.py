@@ -117,7 +117,7 @@ def test_a_real_status_envelope_conforms() -> None:
             message = ws.receive_json()
 
     assert_conforms(validator, message)
-    assert message["payload"]["terminal_connected"] is True
+    assert message["unmapped"]["payload"]["terminal_connected"] is True
 
 
 def test_a_status_message_reports_trading_phase_for_a_watched_symbol() -> None:
@@ -141,13 +141,14 @@ def test_a_status_message_reports_trading_phase_for_a_watched_symbol() -> None:
     phase_messages = [
         message
         for message in messages
-        if message.get("channel") == "status" and "symbol" in message.get("payload", {})
+        if message["metadata"]["event_code"] == "status"
+        and "symbol" in message["unmapped"]["payload"]
     ]
     assert phase_messages, f"no phase status message among {messages!r}"
     for message in phase_messages:
         assert_conforms(validator, message)
-    assert phase_messages[0]["payload"]["symbol"] == WINZ25
-    assert phase_messages[0]["payload"]["trading_phase"] == "CLOSED"
+    assert phase_messages[0]["unmapped"]["payload"]["symbol"] == WINZ25
+    assert phase_messages[0]["unmapped"]["payload"]["trading_phase"] == "CLOSED"
 
 
 def test_a_real_account_envelope_conforms() -> None:

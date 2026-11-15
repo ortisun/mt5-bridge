@@ -25,7 +25,14 @@ from mt5_bridge.api.run_on_worker import run_on_worker
 from mt5_bridge.api.telemetry import stream_operation_span
 from mt5_bridge.clock import Clock
 from mt5_bridge.core.daily_loss_baseline import TradingDayPolicy
-from mt5_bridge.core.envelope import StreamEnvelope, to_wire
+from mt5_bridge.core.envelope import (
+    EXECUTIONS_CHANNEL,
+    StreamEnvelope,
+    StreamPeer,
+    pong_to_wire,
+    resync_required_to_wire,
+    to_wire,
+)
 from mt5_bridge.core.kill_switch import KillSwitch
 from mt5_bridge.core.pollers import BarPoller, BookPoller, TickPoller
 from mt5_bridge.core.sequence_log import ResumeStatus, SequenceEvent, SequenceLog
@@ -41,6 +48,8 @@ DEFAULT_POLL_INTERVAL_SECONDS = 0.05
 # one that is not JSON or does not match ws_messages.schema.json.
 INVALID_MESSAGE_CLOSE_CODE = 1008
 _INVALID_CLIENT_MESSAGE = (ValueError, KeyError, TypeError, AttributeError)
+SUBSCRIBE_OPERATION = "subscribe"
+RESUME_OPERATION = "resume"
 
 
 def _empty_symbols() -> set[str]:
@@ -69,6 +78,7 @@ class _ConnectionState:
     book_symbols: set[str] = field(default_factory=_empty_symbols)
     executions_subscribed: bool = False
     executions_next_seq: int = 1
+    executions_operation: str = SUBSCRIBE_OPERATION
     status_subscribed: bool = False
     last_status_sent: tuple[str, bool] | None = None
     last_phase_sent: dict[str, str] = field(default_factory=_empty_phase_map)
@@ -233,11 +243,16 @@ def _account_envelope(
 
 
 async def _handle_client_message(
-    websocket: WebSocket, message: dict[str, Any], state: _ConnectionState
+    websocket: WebSocket,
+    message: dict[str, Any],
+    state: _ConnectionState,
+    *,
+    peer: StreamPeer,
+    clock: Clock,
 ) -> None:
     op = message.get("op")
     if op == "ping":
-        await websocket.send_json({"type": "pong"})
+        await websocket.send_json(pong_to_wire(peer, now=clock.now_utc()))
         return
     channel = message.get("channel")
     if op == "subscribe":
@@ -250,6 +265,7 @@ async def _handle_client_message(
             state.book_symbols.update(message.get("symbols", ()))
         elif channel == "executions":
             state.executions_subscribed = True
+            state.executions_operation = SUBSCRIBE_OPERATION
         elif channel == "status":
             state.status_subscribed = True
         elif channel == "account":
@@ -274,6 +290,7 @@ async def _handle_client_message(
         return
     if op == "resume" and channel == "executions":
         state.executions_subscribed = True
+        state.executions_operation = RESUME_OPERATION
         from_seq = int(message["from_seq"])
         if from_seq < 1:
             raise ValueError("from_seq must be >= 1")
@@ -323,7 +340,12 @@ async def _publish_market_data(
 
 
 async def _publish_executions(
-    websocket: WebSocket, state: _ConnectionState, *, sequence_log: SequenceLog
+    websocket: WebSocket,
+    state: _ConnectionState,
+    *,
+    sequence_log: SequenceLog,
+    peer: StreamPeer,
+    clock: Clock,
 ) -> None:
     if not state.executions_subscribed:
         return
@@ -331,7 +353,14 @@ async def _publish_executions(
         stream="executions", from_seq=state.executions_next_seq
     )
     if result.status is ResumeStatus.RESYNC_REQUIRED:
-        await websocket.send_json({"channel": "executions", "type": "RESYNC_REQUIRED"})
+        await websocket.send_json(
+            resync_required_to_wire(
+                peer,
+                stream_id=EXECUTIONS_CHANNEL,
+                operation=state.executions_operation,
+                now=clock.now_utc(),
+            )
+        )
         state.executions_subscribed = False
         return
     for event in result.events:
@@ -437,6 +466,7 @@ async def _publish_account(
 async def run_stream_connection(
     websocket: WebSocket,
     *,
+    account_id: str,
     worker: BridgeWorker,
     sequence_log: SequenceLog,
     kill_switch: KillSwitch,
@@ -448,12 +478,18 @@ async def run_stream_connection(
 ) -> None:
     await websocket.accept()
     state = _ConnectionState()
+    client = websocket.client
+    peer = StreamPeer(
+        account_id=account_id,
+        host=client.host if client is not None else None,
+        port=client.port if client is not None else None,
+    )
     try:
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive_json(), timeout=poll_interval)
                 with stream_operation_span(raw):
-                    await _handle_client_message(websocket, raw, state)
+                    await _handle_client_message(websocket, raw, state, peer=peer, clock=clock)
             except TimeoutError:
                 pass
             except _INVALID_CLIENT_MESSAGE:
@@ -464,7 +500,9 @@ async def run_stream_connection(
                 )
                 return
             await _publish_market_data(websocket, state, worker=worker, clock=clock)
-            await _publish_executions(websocket, state, sequence_log=sequence_log)
+            await _publish_executions(
+                websocket, state, sequence_log=sequence_log, peer=peer, clock=clock
+            )
             await _publish_status(
                 websocket,
                 state,

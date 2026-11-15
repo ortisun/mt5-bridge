@@ -139,27 +139,48 @@ class TestWsMessagesSchema:
         }
         assert ops == {"subscribe", "unsubscribe", "resume", "ping"}
 
-    def test_the_envelope_carries_every_required_field(self) -> None:
+    def test_a_data_event_requires_the_ocsf_base_attributes(self) -> None:
         schema = load_ws_schema()
 
         envelope = schema["$defs"]["StreamEnvelope"]
         assert set(envelope["required"]) == {
-            "channel",
-            "stream_id",
-            "seq",
-            "ts_utc",
-            "source_time_raw",
-            "source_time_unit",
-            "time_basis",
-            "received_at",
-            "payload",
+            "class_uid",
+            "category_uid",
+            "activity_id",
+            "type_uid",
+            "time",
+            "severity_id",
+            "metadata",
+            "unmapped",
         }
+        assert envelope["additionalProperties"] is False
+
+    def test_the_metadata_carries_the_sequencing_and_time_fields(self) -> None:
+        schema = load_ws_schema()
+
+        metadata = schema["$defs"]["StreamMetadata"]
+        assert set(metadata["required"]) == {
+            "version",
+            "product",
+            "event_code",
+            "log_name",
+            "sequence",
+            "original_time",
+            "processed_time",
+        }
+        assert metadata["properties"]["version"]["const"] == "1.9.0"
+        unmapped = schema["$defs"]["StreamUnmapped"]
+        assert set(unmapped["required"]) == {"source_time_unit", "time_basis"}
 
     def test_declares_resync_required(self) -> None:
         schema = load_ws_schema()
 
         resync = schema["$defs"]["ResyncRequiredMessage"]
-        assert resync["properties"]["type"]["const"] == "RESYNC_REQUIRED"
+        assert resync["properties"]["status_code"]["const"] == "RESYNC_REQUIRED"
+        assert (
+            resync["properties"]["metadata"]["properties"]["event_code"]["const"]
+            == "RESYNC_REQUIRED"
+        )
 
     def test_the_book_channel_has_a_discriminated_payload_schema(self) -> None:
         schema = load_ws_schema()
@@ -168,9 +189,11 @@ class TestWsMessagesSchema:
         book_rule = next(
             rule
             for rule in envelope["allOf"]
-            if rule["if"]["properties"]["channel"]["const"] == "book"
+            if rule["if"]["properties"]["metadata"]["properties"]["event_code"].get("const")
+            == "book"
         )
-        assert book_rule["then"]["properties"]["payload"]["$ref"] == "#/$defs/BookPayload"
+        payload = book_rule["then"]["properties"]["unmapped"]["properties"]["payload"]
+        assert payload["$ref"] == "#/$defs/BookPayload"
 
         book_payload = schema["$defs"]["BookPayload"]
         assert set(book_payload["required"]) == {"symbol", "levels"}

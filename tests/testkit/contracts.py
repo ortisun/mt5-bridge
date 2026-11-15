@@ -13,11 +13,12 @@ tests, so the gap is a static-typing limitation, not an unverified behavior.
 """
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import yaml
-from jsonschema import Draft202012Validator
+from jsonschema import Draft7Validator, Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
@@ -69,3 +70,29 @@ def assert_conforms(validator: Draft202012Validator, instance: object) -> None:
     each of dozens of call sites.
     """
     validator.validate(instance)  # pyright: ignore[reportUnknownMemberType]
+
+
+# The OCSF classes and objects the bridge emits, derived from schema.ocsf.io by
+# tools/vendor_ocsf_schema.py; validating against it needs no network.
+OCSF_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1] / "contracts" / "ocsf" / "ocsf-1.9.0-subset.schema.json"
+)
+
+
+def load_ocsf_schema() -> dict[str, Any]:
+    with OCSF_SCHEMA_PATH.open(encoding="utf-8") as stream:
+        schema: dict[str, Any] = json.load(stream)
+    return schema
+
+
+_OCSF_VALIDATOR = Draft7Validator(load_ocsf_schema())
+
+
+def assert_is_ocsf_event(event: Mapping[str, Any]) -> None:
+    """``event`` is a valid event of its OCSF class: every required attribute
+    is present, no attribute is outside the schema, enums and object
+    constraints hold, and ``type_uid`` is ``class_uid * 100 + activity_id``."""
+    _OCSF_VALIDATOR.validate(event)  # pyright: ignore[reportUnknownMemberType]
+    assert event["type_uid"] == event["class_uid"] * 100 + event["activity_id"]
+    if event["activity_id"] == 99:
+        assert event.get("activity_name"), "activity 99 (Other) needs the source's activity_name"

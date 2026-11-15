@@ -1,11 +1,11 @@
-"""Real /v1/stream tick and bar envelopes: ``source_time_raw`` must show what
+"""Real /v1/stream tick and bar events: ``metadata.original_time`` must show what
 the terminal reported, not what a wall-clock decorator computed from it.
 
 Regression coverage for the M8/069 evidence in
 ``mt5/terminal_time.py``'s module docstring: the Rico-DEMO terminal reports
 its server's wall clock as if it were UTC, so ``ServerWallClockTerminal``
 converts the session-open epoch of 10:03 to the true UTC instant 13:03. A
-``ts_utc`` of 13:03Z is correct; a ``source_time_raw`` that also reads 13:03
+``time`` of 13:03Z is correct; a ``metadata.original_time`` that also reads 13:03
 would hide the terminal's own report behind the bridge's conversion.
 """
 
@@ -41,8 +41,8 @@ def test_a_wrapped_terminals_tick_envelope_keeps_the_terminals_raw_epoch() -> No
             ws.send_json({"op": "subscribe", "channel": "ticks", "symbols": [WINZ25]})
             message = ws.receive_json()
 
-    assert message["ts_utc"] == "2026-09-25T13:03:00+00:00"
-    assert message["source_time_raw"] == WALL_1003 * 1000
+    assert message["time"] == UTC_1303 * 1000
+    assert message["metadata"]["original_time"] == str(WALL_1003 * 1000)
 
 
 def test_an_unwrapped_terminals_tick_envelope_is_unchanged() -> None:
@@ -55,8 +55,8 @@ def test_an_unwrapped_terminals_tick_envelope_is_unchanged() -> None:
             ws.send_json({"op": "subscribe", "channel": "ticks", "symbols": [WINZ25]})
             message = ws.receive_json()
 
-    assert message["ts_utc"] == "2026-09-25T10:03:00+00:00"
-    assert message["source_time_raw"] == WALL_1003 * 1000
+    assert message["time"] == WALL_1003 * 1000
+    assert message["metadata"]["original_time"] == str(WALL_1003 * 1000)
 
 
 def test_a_wrapped_terminals_bar_envelope_keeps_the_terminals_raw_epoch() -> None:
@@ -74,8 +74,9 @@ def test_a_wrapped_terminals_bar_envelope_keeps_the_terminals_raw_epoch() -> Non
             )
             message = ws.receive_json()
 
-    assert message["ts_utc"] == "2026-09-25T13:03:00+00:00"
-    assert message["source_time_raw"] == WALL_1003
+    assert message["time"] == UTC_1303 * 1000
+    assert message["metadata"]["original_time"] == str(WALL_1003)
+    assert message["unmapped"]["source_time_unit"] == "seconds"
 
 
 def test_an_unwrapped_terminals_bar_envelope_is_unchanged() -> None:
@@ -93,5 +94,5 @@ def test_an_unwrapped_terminals_bar_envelope_is_unchanged() -> None:
             )
             message = ws.receive_json()
 
-    assert message["ts_utc"] == "2026-09-25T10:03:00+00:00"
-    assert message["source_time_raw"] == WALL_1003
+    assert message["time"] == WALL_1003 * 1000
+    assert message["metadata"]["original_time"] == str(WALL_1003)

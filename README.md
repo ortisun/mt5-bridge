@@ -28,6 +28,10 @@ server and for every client:
 | [`contracts/mt5_bridge/openapi.yaml`](contracts/mt5_bridge/openapi.yaml) | REST v1 (OpenAPI 3.1), `info.version` `1.0.0` |
 | [`contracts/mt5_bridge/ws_messages.schema.json`](contracts/mt5_bridge/ws_messages.schema.json) | `/v1/stream` messages (JSON Schema 2020-12) |
 
+Every message on the stream, every log line and every audit record is an
+event of the [Open Cybersecurity Schema Framework](https://schema.ocsf.io/)
+1.9.0. [`docs/ocsf.md`](docs/ocsf.md) has the mapping.
+
 Rules that hold for the contract:
 
 - Prices, volumes and money travel as decimal strings, never as JSON numbers,

@@ -21,6 +21,7 @@ from mt5_bridge.api.app import create_app
 from mt5_bridge.api.app_state import AppState, HealthState
 from mt5_bridge.api.audit import AuditLog
 from mt5_bridge.clock import Clock, SystemClock
+from mt5_bridge.core import ocsf
 from mt5_bridge.core.clock_drift import ClockDriftState
 from mt5_bridge.core.daily_loss_baseline import DailyLossBaseline, TradingDayPolicy
 from mt5_bridge.core.database import BridgeDatabase
@@ -422,6 +423,7 @@ def main() -> None:  # pragma: no cover - exercised via boot()/create_app() in t
     install_log_redaction(secrets=result.log_secrets)
     observability.redact(result.log_secrets)
     app = create_app(result.state, start_background_loops_on_startup=True)
+    logger.info("mt5-bridge starting", extra=ocsf.lifecycle_log_extra(ocsf.LifecycleActivity.START))
     uvicorn.run(
         app,
         host=options.host,
@@ -433,6 +435,7 @@ def main() -> None:  # pragma: no cover - exercised via boot()/create_app() in t
         # every uvicorn record reaches the redacting handler installed above.
         log_config=None,
     )
+    logger.info("mt5-bridge stopped", extra=ocsf.lifecycle_log_extra(ocsf.LifecycleActivity.STOP))
 
 
 if __name__ == "__main__":  # pragma: no cover

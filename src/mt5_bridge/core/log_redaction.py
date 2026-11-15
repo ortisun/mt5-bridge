@@ -19,7 +19,8 @@ reason.
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import cast
 
 _REDACTED = "[redacted]"
 _WITHHELD = "[log record withheld: redaction failed]"
@@ -31,7 +32,8 @@ DEFAULT_LOGGER_NAMES = (*UVICORN_LOGGER_NAMES, "mt5_bridge")
 # Every attribute a bare LogRecord already carries, plus "message"/"asctime"
 # (only populated once a Formatter renders them) -- anything else is an
 # application-supplied ``extra=`` field, scrubbed the same way as the
-# message text (core.log_formatting.JsonLogFormatter surfaces these).
+# message text, strings nested in mappings and sequences included
+# (core.log_formatting.JsonLogFormatter surfaces these).
 STANDARD_LOG_RECORD_FIELDS = frozenset(
     vars(logging.LogRecord("", logging.INFO, "", 0, "", (), None))
 ) | {"message", "asctime"}
@@ -68,8 +70,24 @@ class SecretRedactingFilter(logging.Filter):
         if record.stack_info:
             record.stack_info = self._scrub(record.stack_info)
         for name, value in list(record.__dict__.items()):
-            if name not in STANDARD_LOG_RECORD_FIELDS and isinstance(value, str):
-                record.__dict__[name] = self._scrub(value)
+            if name not in STANDARD_LOG_RECORD_FIELDS:
+                record.__dict__[name] = self._scrub_value(value)
+
+    def _scrub_value(self, value: object) -> object:
+        """``value`` with every string in it scrubbed, through nested mappings,
+        lists and tuples: an ``extra=`` field may be a structure (the OCSF
+        attributes of ``core.ocsf.log_extra`` are one), not only a string."""
+        if isinstance(value, str):
+            return self._scrub(value)
+        if isinstance(value, Mapping):
+            return {
+                self._scrub_value(key): self._scrub_value(item)
+                for key, item in cast("Mapping[object, object]", value).items()
+            }
+        if isinstance(value, list | tuple):
+            items = [self._scrub_value(item) for item in cast("Iterable[object]", value)]
+            return items if isinstance(value, list) else tuple(items)
+        return value
 
     def _scrub(self, text: str) -> str:
         for secret in self._secrets:

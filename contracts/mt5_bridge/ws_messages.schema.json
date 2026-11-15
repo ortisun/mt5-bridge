@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ortisun/mt5-bridge/contracts/mt5_bridge/ws_messages.schema.json",
   "title": "mt5-bridge /v1/stream messages",
-  "description": "Plan section 114 WebSocket v1. Client ops (subscribe, unsubscribe, resume, ping) and every server message shape: the data envelope, RESYNC_REQUIRED, and pong.",
+  "description": "Plan section 114 WebSocket v1. Client ops (subscribe, unsubscribe, resume, ping) and every server message shape: the data events, RESYNC_REQUIRED, and pong. Every server message is an event of the Open Cybersecurity Schema Framework (https://schema.ocsf.io/) version 1.9.0; docs/ocsf.md has the mapping.",
   "$defs": {
     "Channel": {
       "type": "string",
@@ -204,84 +204,357 @@
         { "$ref": "#/$defs/PingMessage" }
       ]
     },
-    "PongMessage": {
+    "OcsfTimestamp": {
+      "type": "integer",
+      "description": "OCSF timestamp_t: milliseconds since 1970-01-01T00:00:00Z."
+    },
+    "OcsfProduct": {
       "type": "object",
-      "required": ["type"],
+      "required": ["name", "vendor_name", "version"],
       "properties": {
-        "type": { "const": "pong" }
+        "name": { "const": "mt5-bridge" },
+        "vendor_name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1, "description": "The release version of the bridge that sent the message." }
+      },
+      "additionalProperties": false,
+      "description": "OCSF product object: the bridge itself."
+    },
+    "OcsfSeverityId": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4, 5, 6, 99],
+      "description": "OCSF severity_id: 1 Informational, 2 Low, 3 Medium, 4 High, 5 Critical, 6 Fatal."
+    },
+    "OcsfStatusId": {
+      "type": "integer",
+      "enum": [0, 1, 2, 99],
+      "description": "OCSF status_id: 0 Unknown, 1 Success, 2 Failure, 99 Other."
+    },
+    "StreamMetadata": {
+      "type": "object",
+      "required": ["version", "product", "event_code", "log_name", "sequence", "original_time", "processed_time"],
+      "properties": {
+        "version": { "const": "1.9.0", "description": "The OCSF schema version every message follows." },
+        "product": { "$ref": "#/$defs/OcsfProduct" },
+        "event_code": {
+          "$ref": "#/$defs/Channel",
+          "description": "The channel. Together with the control codes 'pong' and 'RESYNC_REQUIRED' it is the one attribute a client dispatches on."
+        },
+        "log_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The stream id. 'executions'/'account'/'status' are single global streams; ticks/bars/book are one stream per subscription ('ticks:<symbol>', 'bars:<symbol>:<timeframe>', 'book:<symbol>'; plan section 114: 'filtered market streams receive their own per-subscription sequence')."
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonic per stream id (log_name). Durable and resumable only for the executions channel."
+        },
+        "original_time": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "The time the source reported, untouched, as a decimal integer in unmapped.source_time_unit since the epoch. For a wall-clock terminal it differs from 'time', which is always true UTC."
+        },
+        "processed_time": {
+          "$ref": "#/$defs/OcsfTimestamp",
+          "description": "When the bridge received the datum."
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Executions only: '<log_name>:<sequence>', unique and stable across replays."
+        },
+        "correlation_uid": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Executions only: the client_order_id, shared by every event of one order."
+        }
       },
       "additionalProperties": false
     },
-    "ResyncRequiredMessage": {
+    "StreamUnmapped": {
       "type": "object",
-      "required": ["channel", "type"],
+      "required": ["source_time_unit", "time_basis"],
       "properties": {
-        "channel": { "const": "executions" },
-        "type": { "const": "RESYNC_REQUIRED" }
+        "source_time_unit": { "$ref": "#/$defs/SourceTimeUnit" },
+        "time_basis": { "$ref": "#/$defs/TimeBasis" },
+        "payload": { "type": "object" }
       },
       "additionalProperties": false,
-      "description": "Sent instead of an envelope when a resume's from_seq fell outside the retained window (plan section 114). The client must reconcile via REST before resuming again."
+      "description": "OCSF unmapped object: what the schema has no attribute for. Its structure is part of this contract."
+    },
+    "OrderEntity": {
+      "type": "object",
+      "required": ["type_id", "type", "uid", "data"],
+      "properties": {
+        "type_id": { "const": 99 },
+        "type": { "const": "Order" },
+        "uid": { "type": "string", "minLength": 1, "description": "The client_order_id." },
+        "data": { "$ref": "#/$defs/ExecutionPayload" }
+      },
+      "additionalProperties": false,
+      "description": "OCSF managed_entity object: the order an execution event is about."
+    },
+    "ControlActor": {
+      "type": "object",
+      "required": ["user"],
+      "properties": {
+        "user": {
+          "type": "object",
+          "required": ["uid"],
+          "properties": {
+            "uid": { "type": "string", "minLength": 1, "description": "The terminal account the bridge is bound to." }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "OCSF actor object. The bridge does not identify its callers; the only principal is the terminal account."
+    },
+    "ControlEndpoint": {
+      "type": "object",
+      "properties": {
+        "ip": { "type": "string" },
+        "name": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      },
+      "anyOf": [{ "required": ["ip"] }, { "required": ["name"] }],
+      "additionalProperties": false,
+      "description": "OCSF network_endpoint object: where the connection came from."
+    },
+    "PongMessage": {
+      "type": "object",
+      "required": [
+        "class_uid", "category_uid", "activity_id", "activity_name", "type_uid", "time",
+        "severity_id", "status_id", "metadata", "actor", "api", "src_endpoint"
+      ],
+      "properties": {
+        "class_uid": { "const": 6003 },
+        "class_name": { "const": "API Activity" },
+        "category_uid": { "const": 6 },
+        "category_name": { "const": "Application Activity" },
+        "activity_id": { "const": 99 },
+        "activity_name": { "const": "Ping" },
+        "type_uid": { "const": 600399 },
+        "type_name": { "const": "API Activity: Ping" },
+        "time": { "$ref": "#/$defs/OcsfTimestamp" },
+        "severity_id": { "$ref": "#/$defs/OcsfSeverityId" },
+        "severity": { "type": "string" },
+        "status_id": { "const": 1 },
+        "status": { "const": "Success" },
+        "metadata": {
+          "type": "object",
+          "required": ["version", "product", "event_code"],
+          "properties": {
+            "version": { "const": "1.9.0" },
+            "product": { "$ref": "#/$defs/OcsfProduct" },
+            "event_code": { "const": "pong" }
+          },
+          "additionalProperties": false
+        },
+        "actor": { "$ref": "#/$defs/ControlActor" },
+        "api": {
+          "type": "object",
+          "required": ["operation"],
+          "properties": { "operation": { "const": "ping" } },
+          "additionalProperties": false
+        },
+        "src_endpoint": { "$ref": "#/$defs/ControlEndpoint" }
+      },
+      "additionalProperties": false,
+      "description": "The reply to a ping: an OCSF API Activity event (class 6003) with status Success."
+    },
+    "ResyncRequiredMessage": {
+      "type": "object",
+      "required": [
+        "class_uid", "category_uid", "activity_id", "type_uid", "time", "severity_id",
+        "status_id", "status_code", "metadata", "actor", "api", "src_endpoint"
+      ],
+      "properties": {
+        "class_uid": { "const": 6003 },
+        "class_name": { "const": "API Activity" },
+        "category_uid": { "const": 6 },
+        "category_name": { "const": "Application Activity" },
+        "activity_id": { "const": 2 },
+        "activity_name": { "const": "Read" },
+        "type_uid": { "const": 600302 },
+        "type_name": { "const": "API Activity: Read" },
+        "time": { "$ref": "#/$defs/OcsfTimestamp" },
+        "severity_id": { "$ref": "#/$defs/OcsfSeverityId" },
+        "severity": { "type": "string" },
+        "status_id": { "const": 2 },
+        "status": { "const": "Failure" },
+        "status_code": { "const": "RESYNC_REQUIRED" },
+        "status_detail": { "type": "string" },
+        "metadata": {
+          "type": "object",
+          "required": ["version", "product", "event_code", "log_name"],
+          "properties": {
+            "version": { "const": "1.9.0" },
+            "product": { "$ref": "#/$defs/OcsfProduct" },
+            "event_code": { "const": "RESYNC_REQUIRED" },
+            "log_name": { "const": "executions", "description": "The stream id the client must resynchronize." }
+          },
+          "additionalProperties": false
+        },
+        "actor": { "$ref": "#/$defs/ControlActor" },
+        "api": {
+          "type": "object",
+          "required": ["operation"],
+          "properties": {
+            "operation": { "enum": ["subscribe", "resume"], "description": "The client op that asked for the sequence." }
+          },
+          "additionalProperties": false
+        },
+        "src_endpoint": { "$ref": "#/$defs/ControlEndpoint" }
+      },
+      "additionalProperties": false,
+      "description": "Sent instead of events when the requested sequence fell outside the retained window (plan section 114): an OCSF API Activity event (class 6003) with status Failure. The client must reconcile via REST before resuming again."
     },
     "StreamEnvelope": {
       "type": "object",
       "required": [
-        "channel",
-        "stream_id",
-        "seq",
-        "ts_utc",
-        "source_time_raw",
-        "source_time_unit",
-        "time_basis",
-        "received_at",
-        "payload"
+        "class_uid", "category_uid", "activity_id", "type_uid", "time", "severity_id",
+        "metadata", "unmapped"
       ],
       "properties": {
-        "channel": { "$ref": "#/$defs/Channel" },
-        "stream_id": {
-          "type": "string",
-          "minLength": 1,
-          "description": "'executions'/'account'/'status' are single global streams; ticks/bars/book are one stream per subscription (plan section 114: 'filtered market streams receive their own per-subscription sequence')."
+        "class_uid": { "enum": [0, 3004, 6002] },
+        "class_name": { "type": "string" },
+        "category_uid": { "enum": [0, 3, 6] },
+        "category_name": { "type": "string" },
+        "activity_id": { "type": "integer" },
+        "activity_name": { "type": "string" },
+        "type_uid": { "type": "integer", "description": "class_uid * 100 + activity_id." },
+        "type_name": { "type": "string" },
+        "time": {
+          "$ref": "#/$defs/OcsfTimestamp",
+          "description": "When the event happened, in true UTC: the exchange time of a tick or bar, the instant the bridge observed everything else (unmapped.time_basis says which)."
         },
-        "seq": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Monotonic per stream_id. Durable and resumable only for the executions channel."
-        },
-        "ts_utc": { "type": "string", "format": "date-time" },
-        "source_time_raw": { "type": "integer" },
-        "source_time_unit": { "$ref": "#/$defs/SourceTimeUnit" },
-        "time_basis": { "$ref": "#/$defs/TimeBasis" },
-        "received_at": { "type": "string", "format": "date-time" },
-        "payload": { "type": "object" }
+        "severity_id": { "$ref": "#/$defs/OcsfSeverityId" },
+        "severity": { "type": "string" },
+        "status_id": { "$ref": "#/$defs/OcsfStatusId" },
+        "status": { "type": "string" },
+        "status_code": { "type": "string" },
+        "status_detail": { "type": "string" },
+        "message": { "type": "string" },
+        "metadata": { "$ref": "#/$defs/StreamMetadata" },
+        "entity": { "$ref": "#/$defs/OrderEntity" },
+        "app": { "$ref": "#/$defs/OcsfProduct" },
+        "unmapped": { "$ref": "#/$defs/StreamUnmapped" }
       },
       "additionalProperties": false,
+      "description": "A data message: an OCSF event whose class depends on the channel (metadata.event_code). ticks, bars, book and account are Base Events (class 0) with the payload under unmapped.payload and no optional captions; status is Application Lifecycle (class 6002) with the payload under unmapped.payload; executions is Entity Management (class 3004) with the payload under entity.data.",
       "allOf": [
         {
-          "if": { "properties": { "channel": { "const": "ticks" } }, "required": ["channel"] },
-          "then": { "properties": { "payload": { "$ref": "#/$defs/TickPayload" } } }
-        },
-        {
-          "if": { "properties": { "channel": { "const": "bars" } }, "required": ["channel"] },
-          "then": { "properties": { "payload": { "$ref": "#/$defs/BarPayload" } } }
-        },
-        {
-          "if": { "properties": { "channel": { "const": "book" } }, "required": ["channel"] },
-          "then": { "properties": { "payload": { "$ref": "#/$defs/BookPayload" } } }
+          "if": {
+            "properties": { "metadata": { "properties": { "event_code": { "enum": ["ticks", "bars", "book", "account"] } }, "required": ["event_code"] } },
+            "required": ["metadata"]
+          },
+          "then": {
+            "required": ["activity_name"],
+            "properties": {
+              "class_uid": { "const": 0 },
+              "category_uid": { "const": 0 },
+              "activity_id": { "const": 99 },
+              "type_uid": { "const": 99 },
+              "unmapped": { "required": ["payload"] }
+            }
+          }
         },
         {
           "if": {
-            "properties": { "channel": { "const": "executions" } },
-            "required": ["channel"]
+            "properties": { "metadata": { "properties": { "event_code": { "const": "ticks" } }, "required": ["event_code"] } },
+            "required": ["metadata"]
           },
-          "then": { "properties": { "payload": { "$ref": "#/$defs/ExecutionPayload" } } }
+          "then": {
+            "properties": {
+              "activity_name": { "const": "Tick" },
+              "unmapped": { "properties": { "payload": { "$ref": "#/$defs/TickPayload" } } }
+            }
+          }
         },
         {
-          "if": { "properties": { "channel": { "const": "status" } }, "required": ["channel"] },
-          "then": { "properties": { "payload": { "$ref": "#/$defs/StatusPayload" } } }
+          "if": {
+            "properties": { "metadata": { "properties": { "event_code": { "const": "bars" } }, "required": ["event_code"] } },
+            "required": ["metadata"]
+          },
+          "then": {
+            "properties": {
+              "activity_name": { "const": "Bar" },
+              "unmapped": { "properties": { "payload": { "$ref": "#/$defs/BarPayload" } } }
+            }
+          }
         },
         {
-          "if": { "properties": { "channel": { "const": "account" } }, "required": ["channel"] },
-          "then": { "properties": { "payload": { "$ref": "#/$defs/AccountPayload" } } }
+          "if": {
+            "properties": { "metadata": { "properties": { "event_code": { "const": "book" } }, "required": ["event_code"] } },
+            "required": ["metadata"]
+          },
+          "then": {
+            "properties": {
+              "activity_name": { "const": "Book Snapshot" },
+              "unmapped": { "properties": { "payload": { "$ref": "#/$defs/BookPayload" } } }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "metadata": { "properties": { "event_code": { "const": "account" } }, "required": ["event_code"] } },
+            "required": ["metadata"]
+          },
+          "then": {
+            "properties": {
+              "activity_name": { "const": "Account Snapshot" },
+              "unmapped": { "properties": { "payload": { "$ref": "#/$defs/AccountPayload" } } }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "metadata": { "properties": { "event_code": { "const": "status" } }, "required": ["event_code"] } },
+            "required": ["metadata"]
+          },
+          "then": {
+            "required": ["activity_name", "app"],
+            "properties": {
+              "class_uid": { "const": 6002 },
+              "category_uid": { "const": 6 },
+              "activity_id": { "const": 99 },
+              "activity_name": { "const": "State Report" },
+              "type_uid": { "const": 600299 },
+              "severity_id": {
+                "enum": [1, 4],
+                "description": "1 while the kill switch is NORMAL and the terminal is connected, 4 (High) otherwise."
+              },
+              "unmapped": {
+                "required": ["payload"],
+                "properties": { "payload": { "$ref": "#/$defs/StatusPayload" } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "metadata": { "properties": { "event_code": { "const": "executions" } }, "required": ["event_code"] } },
+            "required": ["metadata"]
+          },
+          "then": {
+            "required": ["entity", "status_id"],
+            "properties": {
+              "class_uid": { "const": 3004 },
+              "category_uid": { "const": 3 },
+              "activity_id": {
+                "enum": [0, 1, 3, 4],
+                "description": "From the order state: 1 Create (RECEIVED, SUBMITTED, ACKNOWLEDGED, REJECTED), 3 Update (PARTIALLY_FILLED, FILLED, PENDING_CANCEL, PENDING_REPLACE, REPLACED), 4 Delete (CANCELED, EXPIRED), 0 Unknown (UNKNOWN). The state itself is entity.data.state."
+              },
+              "status_id": {
+                "enum": [0, 1, 2],
+                "description": "2 Failure for REJECTED, 0 Unknown for UNKNOWN, 1 Success otherwise."
+              },
+              "status_code": { "description": "entity.data.mt5_retcode as a string, when it is not null." },
+              "status_detail": { "description": "entity.data.reason, when it is not null." },
+              "metadata": { "required": ["uid", "correlation_uid"] }
+            }
+          }
         }
       ]
     },

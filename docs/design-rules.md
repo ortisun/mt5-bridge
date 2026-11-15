@@ -8,7 +8,7 @@ behind each citation.
 
 | Citation | Rule it points to |
 | --- | --- |
-| §3.13, §84 Observability | Logs are one JSON object per record and pass through secret redaction before they are written. The process exposes Prometheus metrics (submit-to-ack latency, rejections by reason, `UNKNOWN` orders, terminal disconnects, poll timing) and can export OpenTelemetry traces; nothing is exported by default. |
+| §3.13, §84 Observability | Logs are one JSON object per record, an OCSF event ([ocsf.md](ocsf.md)), and pass through secret redaction before they are written. The process exposes Prometheus metrics (submit-to-ack latency, rejections by reason, `UNKNOWN` orders, terminal disconnects, poll timing) and can export OpenTelemetry traces; nothing is exported by default. |
 | §56 OMS | Order states. `UNKNOWN` is mandatory: when the bridge cannot confirm what the terminal did, the order becomes `UNKNOWN`, blocks new orders on the same instrument until reconciled, and is never retried blindly or resolved by a guess. Cancel-replace returns a discriminated outcome. |
 | §86 Idempotency | A `client_order_id` identifies one order intent. Repeating a request with the same id returns the recorded outcome and never sends a second order. |
 | §107 Pre-trade risk gate and kill switch | Hard limits (volume per order, orders per minute, open notional, daily loss). The kill switch only escalates (`HALT_NEW_ORDERS`, `CANCEL_ALL`, `FLATTEN`) and only an explicit rearm returns it to `NORMAL`. The emergency reduction policy: orders that only reduce exposure are never blocked by the notional, daily-loss, stale-evidence or fresh-quote checks. |

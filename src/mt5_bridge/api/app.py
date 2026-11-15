@@ -54,6 +54,7 @@ def create_app(
     async def stream(websocket: WebSocket) -> None:
         await run_stream_connection(
             websocket,
+            account_id=state.expected_account_id,
             worker=state.worker,
             sequence_log=state.sequence_log,
             kill_switch=state.kill_switch,

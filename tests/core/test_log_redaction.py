@@ -94,6 +94,25 @@ class TestSecretRedactingFilter:
         assert record.__dict__["terminal_password"] == "[redacted]"
         assert record.__dict__["attempt"] == 3
 
+    def test_a_secret_nested_inside_a_structured_extra_field_is_scrubbed(self) -> None:
+        redactor = SecretRedactingFilter({"pw-abc"})
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "called", (), None)
+        record.__dict__["ocsf"] = {
+            "class_uid": 6003,
+            "http_request": {"url": {"path": "/v1/x?password=pw-abc"}},
+            "observed": ["pw-abc", ("pw-abc", 7)],
+            "pw-abc": True,
+        }
+
+        redactor.filter(record)
+
+        assert record.__dict__["ocsf"] == {
+            "class_uid": 6003,
+            "http_request": {"url": {"path": "/v1/x?password=[redacted]"}},
+            "observed": ["[redacted]", ("[redacted]", 7)],
+            "[redacted]": True,
+        }
+
 
 class TestInstall:
     def test_attaches_the_same_filter_instance_to_every_named_logger(self) -> None:

@@ -194,9 +194,9 @@ def test_a_websocket_connection_is_one_span_however_many_messages_it_carries(
     with TypedTestClient(app) as http:
         with http.websocket_connect("/v1/stream", headers={"traceparent": TRACEPARENT}) as ws:
             ws.send_json({"op": "subscribe", "channel": "ticks", "symbols": [WINZ25]})
-            assert ws.receive_json()["channel"] == "ticks"
+            assert ws.receive_json()["metadata"]["event_code"] == "ticks"
             ws.send_json({"op": "ping"})
-            assert ws.receive_json() == {"type": "pong"}
+            assert ws.receive_json()["metadata"]["event_code"] == "pong"
 
     finished = spans.get_finished_spans()
     # One span for the connection, one for the subscription; none per tick,

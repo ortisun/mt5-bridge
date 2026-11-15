@@ -67,7 +67,7 @@ def test_ping_receives_pong() -> None:
             ws.send_json({"op": "ping"})
             message = ws.receive_json()
 
-    assert message == {"type": "pong"}
+    assert message["metadata"]["event_code"] == "pong"
 
 
 def test_bars_channel_only_ever_delivers_closed_bars() -> None:
@@ -81,8 +81,8 @@ def test_bars_channel_only_ever_delivers_closed_bars() -> None:
             client.push_bar(WINZ25, Timeframe.D1, time=2, o=1, h=2, low=1, c=2, volume=10)
             message = ws.receive_json()
 
-    assert message["channel"] == "bars"
-    assert message["payload"]["close"] == "1"
+    assert message["metadata"]["event_code"] == "bars"
+    assert message["unmapped"]["payload"]["close"] == "1"
 
 
 def test_book_channel_delivers_a_snapshot_on_subscribe() -> None:
@@ -93,9 +93,11 @@ def test_book_channel_delivers_a_snapshot_on_subscribe() -> None:
             ws.send_json({"op": "subscribe", "channel": "book", "symbols": [WINZ25]})
             message = ws.receive_json()
 
-    assert message["channel"] == "book"
-    assert message["payload"]["symbol"] == WINZ25
-    assert message["payload"]["levels"] == [{"side": "BUY", "price": "100", "volume": "10"}]
+    assert message["metadata"]["event_code"] == "book"
+    assert message["unmapped"]["payload"]["symbol"] == WINZ25
+    assert message["unmapped"]["payload"]["levels"] == [
+        {"side": "BUY", "price": "100", "volume": "10"}
+    ]
 
 
 def test_book_channel_does_not_repeat_an_unchanged_snapshot() -> None:
@@ -108,8 +110,8 @@ def test_book_channel_does_not_repeat_an_unchanged_snapshot() -> None:
             ws.send_json({"op": "ping"})
             second = ws.receive_json()
 
-    assert first["channel"] == "book"
-    assert second == {"type": "pong"}
+    assert first["metadata"]["event_code"] == "book"
+    assert second["metadata"]["event_code"] == "pong"
 
 
 def test_a_symbol_with_no_depth_publishes_nothing_on_the_book_channel() -> None:
@@ -121,7 +123,7 @@ def test_a_symbol_with_no_depth_publishes_nothing_on_the_book_channel() -> None:
             ws.send_json({"op": "ping"})
             message = ws.receive_json()
 
-    assert message == {"type": "pong"}
+    assert message["metadata"]["event_code"] == "pong"
 
 
 def test_executions_subscribe_delivers_a_submitted_order_event() -> None:
@@ -133,8 +135,8 @@ def test_executions_subscribe_delivers_a_submitted_order_event() -> None:
             http.post("/v1/orders", json=submit_body())
             message = ws.receive_json()
 
-    assert message["channel"] == "executions"
-    assert message["payload"]["client_order_id"] == "co-1"
+    assert message["metadata"]["event_code"] == "executions"
+    assert message["entity"]["data"]["client_order_id"] == "co-1"
 
 
 def test_resume_with_an_expired_cursor_returns_resync_required() -> None:
@@ -148,7 +150,10 @@ def test_resume_with_an_expired_cursor_returns_resync_required() -> None:
             ws.send_json({"op": "resume", "channel": "executions", "from_seq": 1})
             message = ws.receive_json()
 
-    assert message == {"channel": "executions", "type": "RESYNC_REQUIRED"}
+    assert message["metadata"]["event_code"] == "RESYNC_REQUIRED"
+    assert message["metadata"]["log_name"] == "executions"
+    assert message["api"]["operation"] == "resume"
+    assert message["status_code"] == "RESYNC_REQUIRED"
 
 
 def test_account_channel_delivers_a_snapshot_on_subscribe() -> None:
@@ -159,8 +164,8 @@ def test_account_channel_delivers_a_snapshot_on_subscribe() -> None:
             ws.send_json({"op": "subscribe", "channel": "account"})
             message = ws.receive_json()
 
-    assert message["channel"] == "account"
-    assert "balance" in message["payload"]
+    assert message["metadata"]["event_code"] == "account"
+    assert "balance" in message["unmapped"]["payload"]
 
 
 def test_account_channel_does_not_repeat_an_unchanged_snapshot() -> None:
@@ -173,5 +178,5 @@ def test_account_channel_does_not_repeat_an_unchanged_snapshot() -> None:
             ws.send_json({"op": "ping"})
             second = ws.receive_json()
 
-    assert first["channel"] == "account"
-    assert second == {"type": "pong"}
+    assert first["metadata"]["event_code"] == "account"
+    assert second["metadata"]["event_code"] == "pong"

@@ -71,7 +71,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
     path TEXT NOT NULL,
     payload_hash TEXT,
     outcome TEXT NOT NULL,
-    detail TEXT
+    detail TEXT,
+    src_host TEXT,
+    src_port INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS kill_switch_state (
@@ -100,6 +102,14 @@ CREATE TABLE IF NOT EXISTS daily_loss_baseline (
 );
 """
 
+# Columns added after a table first shipped: (table, column, declaration).
+# The audit trail gained the request's peer address with the OCSF mapping
+# (docs/ocsf.md): API Activity requires a source endpoint.
+_ADDED_COLUMNS = (
+    ("audit_log", "src_host", "TEXT"),
+    ("audit_log", "src_port", "INTEGER"),
+)
+
 
 class BridgeDatabase:
     """Owns the one SQLite connection the bridge process keeps open."""
@@ -111,7 +121,16 @@ class BridgeDatabase:
         with self._lock, self._conn:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
+            self._add_missing_columns()
         self._restrict_file_permissions(path)
+
+    def _add_missing_columns(self) -> None:
+        """``CREATE TABLE IF NOT EXISTS`` leaves a table from an earlier
+        version as it was; add the columns that version did not have."""
+        for table, column, declaration in _ADDED_COLUMNS:
+            present = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in present:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     @staticmethod
     def _restrict_file_permissions(path: str) -> None:

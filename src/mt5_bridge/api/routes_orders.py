@@ -224,6 +224,7 @@ async def submit_order(
         path="/v1/orders",
         payload_hash=payload_hash,
         outcome=result.entry.state.value,
+        client=request.client,
     )
     return _entry_to_response(result.entry)
 
@@ -240,6 +241,7 @@ async def reconcile_order(client_order_id: str, *, request: Request) -> OrderRes
         path=f"/v1/orders/{client_order_id}/reconcile",
         payload_hash=None,
         outcome=entry.state.value,
+        client=request.client,
     )
     return _entry_to_response(entry)
 
@@ -266,6 +268,7 @@ async def amend_order(
         path=f"/v1/orders/{client_order_id}",
         payload_hash=_payload_hash(body),
         outcome=entry.state.value,
+        client=request.client,
     )
     return _entry_to_response(entry)
 
@@ -301,6 +304,7 @@ async def replace_order(
         path=f"/v1/orders/{client_order_id}/replace",
         payload_hash=_payload_hash(body),
         outcome=result.outcome.value,
+        client=request.client,
     )
     return ReplaceOrderResponse(
         operation_id=body.operation_id,
@@ -325,6 +329,7 @@ async def cancel_order(
         path=f"/v1/orders/{client_order_id}",
         payload_hash=None,
         outcome=entry.state.value,
+        client=request.client,
     )
     return _entry_to_response(entry)
 
@@ -361,6 +366,7 @@ async def activate_kill_switch(
         path="/v1/kill-switch",
         payload_hash=_payload_hash(body),
         outcome=status.state.value,
+        client=request.client,
     )
     return KillSwitchResponse(
         state=status.state.value, reason=status.reason, updated_at=status.updated_at.isoformat()
@@ -378,6 +384,7 @@ async def rearm_kill_switch(*, request: Request) -> KillSwitchResponse:
         path="/v1/kill-switch",
         payload_hash=None,
         outcome=status.state.value,
+        client=request.client,
     )
     return KillSwitchResponse(
         state=status.state.value, reason=status.reason, updated_at=status.updated_at.isoformat()

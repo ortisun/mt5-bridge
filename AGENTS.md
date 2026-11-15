@@ -20,5 +20,8 @@ runbook is [docs/runbook.md](docs/runbook.md).
   no client authentication: access control is the network's job (bind address, guest firewall).
   Limits, the kill switch and the dead-man switch stay in
   `core/`, outside any client.
+- Log lines, audit records and stream messages are OCSF events. Class ids, activity ids and
+  attribute names come only from `src/mt5_bridge/core/ocsf.py`; the mapping is in
+  [docs/ocsf.md](docs/ocsf.md), and `tests/contracts/` validates what is emitted.
 - Comments cite the design rules by number (`plan §N`, `ADR-NNN`, `rule N`); see
   [docs/design-rules.md](docs/design-rules.md) for what each one says.
