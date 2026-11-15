@@ -95,7 +95,7 @@ files changed without a higher contract version. The procedure is in
 
 ```
 contracts/mt5_bridge/   the REST, WebSocket and gRPC contract
-src/mt5_bridge/api/     routes, auth, WebSocket, request and response models
+src/mt5_bridge/api/     routes, WebSocket, gRPC services, request and response models
 src/mt5_bridge/api/grpc_api/   the gRPC services and the code generated from the .proto
 src/mt5_bridge/core/    journal, sequence log, limits, kill switch, pollers
 src/mt5_bridge/mt5/     Mt5Client protocol, fake terminal, real terminal client
