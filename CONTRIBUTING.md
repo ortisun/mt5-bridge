@@ -27,7 +27,7 @@ It runs, in order:
 | --- | --- | --- |
 | `make lint` | `uv lock --check`, `ruff check`, `ruff format --check` | the lock file matches `pyproject.toml`; lint rules; formatting |
 | `make types` | `pyright` | strict type checking of `src` and `tests` |
-| `make architecture` | `lint-imports` | only `mt5/real_client.py` imports `MetaTrader5` |
+| `make architecture` | `lint-imports` | only `mt5/real_client.py` imports `MetaTrader5`; the MCP adapter and the service do not import each other |
 | `make test` | `pytest` | unit and contract tests against the fake terminal |
 | `make build` | `uv build --no-sources` | the package builds |
 
@@ -76,6 +76,10 @@ client.
   `src/mt5_bridge/api/grpc_api/generated/` in the same commit.
 - The version the server reports in `src/mt5_bridge/api/app.py` equals the
   contract version.
+- The MCP adapter's tools are generated from `openapi.yaml`. Run
+  `make mcp-operations` after a contract change and commit
+  `src/mt5_bridge/mcp_adapter/operations.json` with it; a test fails while
+  it is stale ([docs/mcp.md](docs/mcp.md)).
 - A commit that changes the contract uses the scope `contract`; a breaking
   one also carries `!` and a `BREAKING CHANGE:` footer.
 
@@ -89,8 +93,8 @@ Every commit follows [Conventional Commits](https://www.conventionalcommits.org/
 
 - Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`,
   `chore`, `revert`.
-- Scopes are optional. The ones in use: `api`, `core`, `mt5`, `contract`,
-  `deploy`, `docs`, `deps`, `ci`, `repo`. `version` belongs to the commit
+- Scopes are optional. The ones in use: `api`, `core`, `mt5`, `mcp`,
+  `contract`, `deploy`, `docs`, `deps`, `ci`, `repo`. `version` belongs to the commit
   `make bump` makes.
 - The summary is in the imperative, lower case, without a final period, and
   the whole first line has at most 100 characters.

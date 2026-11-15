@@ -1,23 +1,20 @@
 """A strictly-typed facade over FastAPI's ``TestClient``.
 
-This installation warns that httpx support in ``starlette.testclient`` is
-being replaced ("install httpx2 instead"); during that transition,
-``TestClient.get/post/patch/delete`` resolve to an unknown type under
-strict Pyright, even though they work correctly at runtime (every test using
-this facade passes). Containing the four resulting ``pyright: ignore``
-markers to these five methods — instead of an unresolved type at every one
-of dozens of call sites — is the documented, narrow exception (the root
-cause is a third-party library's in-progress migration, not a defect this
-project can fix or that these markers hide).
+``starlette.testclient`` uses httpx2 when it is installed, and the MCP SDK in
+the dev group installs it, so the responses here are ``httpx2.Response``.
+Tests call this facade instead of ``TestClient``, and take ``Response`` from
+here, so that one module names the HTTP library.
 """
 
 from types import TracebackType
 from typing import Any, Self
 
-import httpx
+import httpx2
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
+
+Response = httpx2.Response
 
 
 class TypedTestClient:
@@ -38,17 +35,17 @@ class TypedTestClient:
     ) -> None:
         self._client.__exit__(exc_type, exc_value, traceback)
 
-    def get(self, path: str, **kwargs: Any) -> httpx.Response:
-        return self._client.get(path, **kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    def get(self, path: str, **kwargs: Any) -> Response:
+        return self._client.get(path, **kwargs)
 
-    def post(self, path: str, **kwargs: Any) -> httpx.Response:
-        return self._client.post(path, **kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    def post(self, path: str, **kwargs: Any) -> Response:
+        return self._client.post(path, **kwargs)
 
-    def patch(self, path: str, **kwargs: Any) -> httpx.Response:
-        return self._client.patch(path, **kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    def patch(self, path: str, **kwargs: Any) -> Response:
+        return self._client.patch(path, **kwargs)
 
-    def delete(self, path: str, **kwargs: Any) -> httpx.Response:
-        return self._client.delete(path, **kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    def delete(self, path: str, **kwargs: Any) -> Response:
+        return self._client.delete(path, **kwargs)
 
     def websocket_connect(self, path: str, **kwargs: Any) -> WebSocketTestSession:
         return self._client.websocket_connect(path, **kwargs)

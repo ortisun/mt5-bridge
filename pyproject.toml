@@ -19,6 +19,15 @@ dependencies = [
     "protobuf==7.36.2",
 ]
 
+[project.optional-dependencies]
+mcp = [
+    "httpx2==2.16.0",
+    "mcp==2.3.0",
+]
+
+[project.scripts]
+mt5-bridge-mcp = "mt5_bridge.mcp_adapter.__main__:main"
+
 [build-system]
 requires = ["uv_build==0.12.11"]
 build-backend = "uv_build"
@@ -45,6 +54,7 @@ venv = ".venv"
 
 [dependency-groups]
 dev = [
+    "mt5-bridge[mcp]",
     "commitizen>=4.18.1,<5",
     "grpcio-tools==1.85.1",
     "httpx==0.28.1",
@@ -105,3 +115,29 @@ major_version_zero = true
 annotated_tag = true
 bump_message = "chore(version): v$new_version"
 changelog_incremental = true
+
+[[tool.importlinter.contracts]]
+name = "The MCP adapter is a client: it reaches the bridge only over HTTP"
+type = "forbidden"
+source_modules = ["mt5_bridge.mcp_adapter"]
+forbidden_modules = [
+    "mt5_bridge.api",
+    "mt5_bridge.core",
+    "mt5_bridge.mt5",
+    "mt5_bridge.main",
+    "mt5_bridge.settings",
+    "mt5_bridge.secrets",
+]
+
+[[tool.importlinter.contracts]]
+name = "The bridge service does not depend on the MCP adapter or the MCP SDK"
+type = "forbidden"
+source_modules = [
+    "mt5_bridge.api",
+    "mt5_bridge.core",
+    "mt5_bridge.mt5",
+    "mt5_bridge.main",
+    "mt5_bridge.settings",
+    "mt5_bridge.secrets",
+]
+forbidden_modules = ["mt5_bridge.mcp_adapter", "mcp"]

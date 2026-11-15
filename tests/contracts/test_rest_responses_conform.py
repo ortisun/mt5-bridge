@@ -3,7 +3,6 @@
 from decimal import Decimal
 from typing import Any
 
-import httpx
 import pytest
 
 from mt5_bridge.mt5.fake_client import FakeMt5Client
@@ -11,7 +10,7 @@ from mt5_bridge.mt5.fake_client import FakeMt5Client
 from testkit.app_builder import build_test_app
 from testkit.contracts import assert_conforms, load_openapi, openapi_schema_validator
 from testkit.fixtures import PETR4, WINZ25
-from testkit.http_client import TypedTestClient
+from testkit.http_client import Response, TypedTestClient
 
 OPENAPI = load_openapi()
 
@@ -76,7 +75,7 @@ class TestOrderConforms:
         assert_conforms(validator, response.json())
 
 
-def assert_is_a_problem(response: httpx.Response, status: int) -> dict[str, Any]:
+def assert_is_a_problem(response: Response, status: int) -> dict[str, Any]:
     """The response is a Problem Details document that matches the contract."""
     assert response.status_code == status
     assert response.headers["content-type"] == "application/problem+json"

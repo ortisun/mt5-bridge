@@ -1,4 +1,4 @@
-.PHONY: sync hooks proto format lint types architecture test build commits check package bump contract release-notes release-gate
+.PHONY: sync hooks proto format lint types architecture test build commits check package bump contract release-notes release-gate mcp-operations
 
 # The range of commits `make commits` checks. The first commit of the repository
 # predates the rule, so the range starts after it.
@@ -41,6 +41,10 @@ commits:
 		echo "a commit in $(COMMIT_RANGE) has a Co-authored-by trailer"; exit 1; fi
 
 check: lint types architecture test build
+
+# Regenerate the MCP adapter's tools after a change to the REST contract (docs/mcp.md).
+mcp-operations:
+	uv run --locked python tools/generate_mcp_operations.py
 
 # The application tree for the Windows guest: the committed files of HEAD under app/.
 package:

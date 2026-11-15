@@ -15,6 +15,11 @@ runbook is [docs/runbook.md](docs/runbook.md).
 - An API change edits `contracts/mt5_bridge/` in the same commit as the server code; the tests in
   `tests/contracts/` must keep passing. A change to `mt5_bridge.proto` also needs `make proto`,
   which rewrites `src/mt5_bridge/api/grpc_api/generated/`; never edit that directory by hand.
+- `src/mt5_bridge/mcp_adapter/` is the MCP server for AI agents ([docs/mcp.md](docs/mcp.md)). It is
+  a client: it calls the bridge over HTTP and imports nothing from `api`, `core` or `mt5`
+  (import-linter enforces it). Its tools are generated from the contract; after a contract change
+  run `make mcp-operations` and commit `operations.json` with it. It must not gain trading logic
+  or retries of orders.
 - Do not change UTM, start a terminal or place live credentials in code or tests.
 - Credentials come from environment variables set on the machine (`MT5_BRIDGE_LOGIN`,
   `MT5_BRIDGE_PASSWORD`, `MT5_BRIDGE_SERVER`), never from a file in this repository. The API has

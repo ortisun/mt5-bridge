@@ -99,15 +99,33 @@ src/mt5_bridge/api/     routes, auth, WebSocket, request and response models
 src/mt5_bridge/api/grpc_api/   the gRPC services and the code generated from the .proto
 src/mt5_bridge/core/    journal, sequence log, limits, kill switch, pollers
 src/mt5_bridge/mt5/     Mt5Client protocol, fake terminal, real terminal client
+src/mt5_bridge/mcp_adapter/  MCP server for AI agents; a client of the REST contract
 typings/MetaTrader5/    minimal type stub, so Pyright works off Windows
 tests/                  unit and contract tests, all against the fake terminal
 deploy/                 Windows install and start scripts, example configuration
-tools/                  release helpers: version bump, gate, release notes
+tools/                  release helpers and the MCP tool generator
 docs/                   install guide, release procedure, runbook, errors and notes
 ```
 
 `src/mt5_bridge/mt5/real_client.py` is the only module allowed to import
 `MetaTrader5`; import-linter enforces it.
+
+## AI agents (MCP)
+
+`mt5-bridge-mcp` exposes the REST contract to AI agents as
+[Model Context Protocol](https://modelcontextprotocol.io/) tools, one per
+operation. It runs beside the agent on macOS, Linux or Windows and calls the
+bridge over HTTP. Like the bridge, it has no access control of its own:
+whoever can run the adapter can do everything the bridge allows. Setup, the
+trading rules and what has been tried are in [`docs/mcp.md`](docs/mcp.md).
+
+```bash
+uv run --locked --extra mcp mt5-bridge-mcp
+```
+
+The adapter imports nothing from the service and the service does not import
+it or the MCP SDK; import-linter enforces both. The Windows install does not
+include it.
 
 ## Development and tests
 
