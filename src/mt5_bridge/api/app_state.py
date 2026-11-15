@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from fastapi import Request
+from opentelemetry.metrics import Meter, NoOpMeter
 from prometheus_client import CollectorRegistry
 
 from mt5_bridge.api.audit import AuditLog
@@ -76,6 +77,9 @@ class AppState:
     # defaults to the explicit no-telemetry choice so every existing test
     # app stays unaffected.
     metrics: Metrics = field(default_factory=NullMetrics)
+    # The meter behind the same registry, for instruments the Port does not
+    # cover (api.telemetry: HTTP server metrics); records nothing by default.
+    meter: Meter = field(default_factory=lambda: NoOpMeter("mt5_bridge"))
 
 
 def get_state(request: Request) -> AppState:

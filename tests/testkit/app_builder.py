@@ -137,6 +137,7 @@ def build_test_app_state(
         health=health,
         metrics_registry=metrics_bootstrap.registry,
         metrics=metrics,
+        meter=metrics_bootstrap.meter,
     )
     return state, client
 

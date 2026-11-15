@@ -14,12 +14,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from opentelemetry import trace
+
 from mt5_bridge.clock import Clock
 from mt5_bridge.core.database import BridgeDatabase
 from mt5_bridge.core.execution_events import finalize_and_publish
 from mt5_bridge.core.oms_state import BridgeOrderState, map_terminal_state
 from mt5_bridge.core.order_journal import JournalEntry, OrderJournal
 from mt5_bridge.core.sequence_log import SequenceLog
+from mt5_bridge.core.tracing import traced_sync
 from mt5_bridge.mt5.client import Mt5Client
 from mt5_bridge.mt5.models import Mt5Deal, Mt5Order
 
@@ -53,6 +56,7 @@ def _index_by_tag(orders: list[Mt5Order]) -> dict[str, list[Mt5Order]]:
     return index
 
 
+@traced_sync("mt5_bridge.reconciliation.boot")
 def reconcile_on_boot(
     *,
     journal: OrderJournal,
@@ -63,6 +67,8 @@ def reconcile_on_boot(
     window: timedelta,
 ) -> ReconciliationReport:
     pending = journal.list_unconfirmed_no_transaction()
+    boot_span = trace.get_current_span()
+    boot_span.set_attribute("mt5_bridge.reconciliation.pending", len(pending))
     if not pending:
         return ReconciliationReport(resolved=(), unknown=())
 
@@ -109,6 +115,8 @@ def reconcile_on_boot(
         else:
             resolved.append(entry.client_order_id)
 
+    boot_span.set_attribute("mt5_bridge.reconciliation.resolved", len(resolved))
+    boot_span.set_attribute("mt5_bridge.reconciliation.unknown", len(unknown))
     return ReconciliationReport(resolved=tuple(resolved), unknown=tuple(unknown))
 
 

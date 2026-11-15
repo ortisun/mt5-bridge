@@ -4,7 +4,12 @@ Every item of an ``it_*.py`` module is marked ``integration`` and deselected by 
 default ``addopts``; a hand-written ``integration`` mark elsewhere fails collection.
 """
 
+from collections.abc import Iterator
+
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from testkit.telemetry import capture_spans
 
 INTEGRATION_PREFIX = "it_"
 
@@ -22,3 +27,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             f"Mark integration tests only by the {INTEGRATION_PREFIX}*.py module prefix: "
             + ", ".join(misplaced)
         )
+
+
+@pytest.fixture
+def spans() -> Iterator[InMemorySpanExporter]:
+    """Every span the test finishes, captured in memory (``testkit.telemetry``)."""
+    exporter = capture_spans()
+    yield exporter
+    exporter.clear()

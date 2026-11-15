@@ -22,6 +22,7 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from mt5_bridge.api.run_on_worker import run_on_worker
+from mt5_bridge.api.telemetry import stream_operation_span
 from mt5_bridge.clock import Clock
 from mt5_bridge.core.daily_loss_baseline import TradingDayPolicy
 from mt5_bridge.core.envelope import StreamEnvelope, to_wire
@@ -451,7 +452,8 @@ async def run_stream_connection(
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive_json(), timeout=poll_interval)
-                await _handle_client_message(websocket, raw, state)
+                with stream_operation_span(raw):
+                    await _handle_client_message(websocket, raw, state)
             except TimeoutError:
                 pass
             except _INVALID_CLIENT_MESSAGE:

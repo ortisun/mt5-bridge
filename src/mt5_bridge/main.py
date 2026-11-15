@@ -30,7 +30,8 @@ from mt5_bridge.core.limits_guard import LimitsConfig, LimitsGuard
 from mt5_bridge.core.limits_state_provider import AccountEquityTracker, compute_limits_state
 from mt5_bridge.core.log_formatting import JsonLogFormatter
 from mt5_bridge.core.log_redaction import collect_bridge_secrets
-from mt5_bridge.core.metrics import configure_metrics, register_state_gauges
+from mt5_bridge.core.metrics import register_state_gauges
+from mt5_bridge.core.observability import Observability, configure_observability
 from mt5_bridge.core.order_journal import OrderJournal
 from mt5_bridge.core.order_service import OrderService
 from mt5_bridge.core.pollers import ExecutionPoller
@@ -39,7 +40,6 @@ from mt5_bridge.core.replace_operations import ReplaceOperationStore
 from mt5_bridge.core.sequence_log import SequenceLog
 from mt5_bridge.core.supervisor import verify_account_binding, verify_netting_mode
 from mt5_bridge.core.terminal_watchdog import TerminalReconnect, TerminalWatchdogState
-from mt5_bridge.core.tracing import configure_tracing
 from mt5_bridge.core.worker import BridgeWorker
 from mt5_bridge.mt5.client import Mt5Client
 from mt5_bridge.mt5.fake_client import FakeMt5Client
@@ -251,12 +251,18 @@ def _load_limits_config(env: Mapping[str, str]) -> LimitsConfig:
     )
 
 
-def boot(env: Mapping[str, str], secrets: SecretReader | None = None) -> BootResult:
+def boot(
+    env: Mapping[str, str],
+    secrets: SecretReader | None = None,
+    observability: Observability | None = None,
+) -> BootResult:
     """Build every dependency, run boot checks, and return a ready ``AppState``.
 
     Split from ``main()`` so tests exercise the exact composition path
     without needing a real terminal or an actual HTTP server (tests inject an
     ``InMemorySecretReader``; production reads the secret variables).
+    ``main()`` passes the ``Observability`` it already installed process-wide;
+    without one, boot builds its own, registered nowhere.
     """
     settings = BridgeSettings.from_env(env)
     trading_day_policy = TradingDayPolicy(settings.trading_day_time_zone)
@@ -273,14 +279,12 @@ def boot(env: Mapping[str, str], secrets: SecretReader | None = None) -> BootRes
     )
     account = client.account_info()
 
-    # Telemetry (plan §84, ADR-095): bootstrapped before anything that
-    # records a metric (KillSwitch, OrderService) is constructed. Tracing
-    # bootstrap has no manual spans yet in this process; the metrics
+    # Telemetry (plan §84, ADR-095): available before anything that records
+    # a metric (KillSwitch, OrderService) is constructed. The metrics
     # registry backs GET /v1/metrics (api.routes_metrics) -- no separate
     # listener.
-    configure_tracing(env)
-    metrics_bootstrap = configure_metrics(env)
-    metrics = metrics_bootstrap.metrics
+    observability = observability or configure_observability(env)
+    metrics = observability.metrics
 
     db = BridgeDatabase(settings.db_path)
     journal = OrderJournal(db)
@@ -355,7 +359,7 @@ def boot(env: Mapping[str, str], secrets: SecretReader | None = None) -> BootRes
 
     health = HealthState()
     register_state_gauges(
-        metrics_bootstrap.meter,
+        observability.meter,
         kill_switch=kill_switch,
         dead_man_switch=dead_man_switch,
         terminal_watchdog_state=terminal_watchdog_state,
@@ -384,8 +388,9 @@ def boot(env: Mapping[str, str], secrets: SecretReader | None = None) -> BootRes
         auction_window=timedelta(seconds=settings.auction_window_seconds),
         terminal_reconnect=terminal_reconnect,
         health=health,
-        metrics_registry=metrics_bootstrap.registry,
+        metrics_registry=observability.registry,
         metrics=metrics,
+        meter=observability.meter,
     )
     return BootResult(
         state=state,
@@ -407,9 +412,15 @@ def main() -> None:  # pragma: no cover - exercised via boot()/create_app() in t
     formatter = JsonLogFormatter(deployment_environment=os.environ.get("MT5_BRIDGE_ENVIRONMENT"))
     for handler in logging.getLogger().handlers:
         handler.setFormatter(formatter)
+    # Traces, metrics and logs (docs/observability.md): one bootstrap, whose
+    # shutdown flushes all three at exit. Its log handler joins root here, so
+    # the redaction installed below covers it like the stdout handler.
+    observability = configure_observability(os.environ)
+    observability.install()
     options = serve_options(os.environ)
-    result = boot(os.environ)
+    result = boot(os.environ, observability=observability)
     install_log_redaction(secrets=result.log_secrets)
+    observability.redact(result.log_secrets)
     app = create_app(result.state, start_background_loops_on_startup=True)
     uvicorn.run(
         app,

@@ -18,6 +18,8 @@ from decimal import Decimal
 from time import perf_counter
 from typing import TypeVar
 
+from opentelemetry import trace
+
 from mt5_bridge.clock import Clock
 from mt5_bridge.core.clock_drift import ClockDriftState, within_threshold
 from mt5_bridge.core.database import BridgeDatabase
@@ -34,6 +36,7 @@ from mt5_bridge.core.replace_operations import ReceiveOutcome as ReplaceReceiveO
 from mt5_bridge.core.replace_operations import ReplaceOperationRow, ReplaceOperationStore
 from mt5_bridge.core.sequence_log import SequenceLog
 from mt5_bridge.core.terminal_watchdog import TerminalWatchdogState
+from mt5_bridge.core.tracing import traced
 from mt5_bridge.core.worker import (
     BridgeWorker,
     CommandPriority,
@@ -234,6 +237,16 @@ class OrderService:
         mt5_last_error: str | None,
         reason: str | None,
     ) -> JournalEntry:
+        # Every order operation ends here (possibly several times, as in
+        # cancel_all): the outcome goes on the operation's span as an event.
+        trace.get_current_span().add_event(
+            "mt5_bridge.order.finalized",
+            {
+                "mt5_bridge.order.client_order_id": client_order_id,
+                "mt5_bridge.order.state": state.value,
+                **({} if mt5_retcode is None else {"mt5_bridge.mt5.retcode": mt5_retcode}),
+            },
+        )
         return finalize_and_publish(
             db=self._db,
             journal=self._journal,
@@ -292,6 +305,11 @@ class OrderService:
 
         return await self._run(CommandPriority.ORDER, query)
 
+    @traced(
+        "mt5_bridge.order.submit",
+        capture=("client_order_id", "symbol", "side", "order_type", "time_in_force"),
+        prefix="mt5_bridge.order.",
+    )
     async def submit_order(
         self,
         *,
@@ -335,6 +353,13 @@ class OrderService:
             )
         elif result.entry.state is BridgeOrderState.UNKNOWN:
             self._metrics.increment("mt5_bridge.order.unknown", symbol=symbol)
+        submit_span = trace.get_current_span()
+        submit_span.set_attribute("mt5_bridge.order.state", result.entry.state.value)
+        submit_span.set_attribute("mt5_bridge.order.replayed", result.replayed)
+        if result.entry.state is BridgeOrderState.UNKNOWN:
+            # A lost terminal response (plan §56): the one outcome that is an error.
+            submit_span.set_attribute("error.type", BridgeOrderState.UNKNOWN.value)
+            submit_span.set_status(trace.Status(trace.StatusCode.ERROR, "order state unknown"))
         return result
 
     async def _submit_order_impl(
@@ -698,6 +723,7 @@ class OrderService:
         )
         return SubmitResult(entry=entry, replayed=False)
 
+    @traced("mt5_bridge.order.reconcile", capture=("client_order_id",), prefix="mt5_bridge.order.")
     async def reconcile_order(self, client_order_id: str) -> JournalEntry:
         """Re-examine one UNKNOWN/RECEIVED entry against the terminal.
 
@@ -734,6 +760,7 @@ class OrderService:
             reason=reason,
         )
 
+    @traced("mt5_bridge.order.cancel", capture=("client_order_id",), prefix="mt5_bridge.order.")
     async def cancel_order(self, client_order_id: str) -> JournalEntry:
         entry = self._journal.get_no_transaction(client_order_id)
         if entry is None:
@@ -810,6 +837,7 @@ class OrderService:
             reason=result.comment,
         )
 
+    @traced("mt5_bridge.order.amend", capture=("client_order_id",), prefix="mt5_bridge.order.")
     async def amend_order(
         self,
         client_order_id: str,
@@ -873,6 +901,11 @@ class OrderService:
             reason=result.comment,
         )
 
+    @traced(
+        "mt5_bridge.order.replace",
+        capture=("operation_id", "original_client_order_id", "new_client_order_id"),
+        prefix="mt5_bridge.order.",
+    )
     async def replace_order(
         self,
         *,
@@ -1067,6 +1100,7 @@ class OrderService:
             new=self._journal.get_no_transaction(operation.new_client_order_id),
         )
 
+    @traced("mt5_bridge.order.cancel_all")
     async def cancel_all(self) -> CancelAllResult:
         """Kill-switch CANCEL_ALL and the dead-man sweep both drive this
         (plan §107): cancel every open order at the terminal, then reconcile
@@ -1100,6 +1134,7 @@ class OrderService:
             journal_updated=tuple(updated),
         )
 
+    @traced("mt5_bridge.order.flatten")
     async def flatten(self, *, comment: str = "kill-switch flatten") -> FlattenResult:
         """Kill-switch FLATTEN (plan §107 EmergencyReductionPolicy): one
         closing MARKET intent per open position, capped exactly at the

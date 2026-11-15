@@ -139,6 +139,34 @@ after its CANCEL_ALL the switch stays disarmed until the next heartbeat,
 so the rearm holds. Rearming does not restart pollers or
 clear `UNKNOWN` orders; it only allows new submissions again.
 
+## Traces, metrics and logs
+
+[observability.md](observability.md) lists the variables, the span names and
+the metric names. What an operator needs day to day:
+
+- Metrics: `GET /v1/metrics` (Prometheus text) always works and needs no
+  configuration. Besides the kill-switch, dead-man, terminal and poll gauges
+  it has `http_server_request_duration_seconds` and
+  `http_server_active_requests`.
+- Finding the trace of a failed request: the console log line of the failure
+  has `trace_id` and `span_id` whenever it was written inside a request. With
+  trace export on, search the backend for that trace id; the trace shows the
+  request, the order operation, the wait for the terminal worker and the
+  terminal call. A client that sends a `traceparent` header sees the bridge's
+  spans under its own.
+- Turning export on or off: set or remove `OTEL_TRACES_EXPORTER`,
+  `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` and
+  `OTEL_EXPORTER_OTLP_ENDPOINT` in `config\bridge.env` and restart the
+  bridge. Left unset, nothing is exported.
+- The collector is down: the bridge keeps serving. The exporter logs its
+  failed attempts on the console and drops what it could not send; nothing is
+  replayed later.
+- `otlp` selected but no endpoint set: the signal stays off and the boot log
+  has a warning that names the missing variable.
+- At shutdown the bridge flushes what is still queued, for at most five
+  seconds per signal. A process that is killed loses its queued spans and
+  log records; the console log is not affected.
+
 ## Windows/UTM deployment
 
 The guest runs Windows 11 on Apple Silicon; the terminal and the pinned

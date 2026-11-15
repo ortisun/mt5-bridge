@@ -13,6 +13,7 @@ from mt5_bridge.api.middleware import MaxBodySizeMiddleware
 from mt5_bridge.api.routes_market import router as market_router
 from mt5_bridge.api.routes_metrics import router as metrics_router
 from mt5_bridge.api.routes_orders import router as orders_router
+from mt5_bridge.api.telemetry import TelemetryMiddleware
 from mt5_bridge.api.ws import run_stream_connection
 from mt5_bridge.core.clock_drift import ClockDriftProbe, ntp_drift_probe
 
@@ -40,6 +41,8 @@ def create_app(
     app = FastAPI(title="mt5-bridge", version="1.0.0", lifespan=lifespan)
     app.state.bridge = state
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=state.settings.max_request_body_bytes)
+    # Added last, so outermost: it also observes a request rejected above.
+    app.add_middleware(TelemetryMiddleware, meter=state.meter)
 
     app.include_router(market_router)
     app.include_router(orders_router)

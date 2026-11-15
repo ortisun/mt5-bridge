@@ -124,6 +124,11 @@ bridge binds `MT5_BRIDGE_HOST` (default `127.0.0.1`), and on the Windows
 guest the install script adds a firewall rule that admits the port only from
 the host address.
 
+Traces, metrics and logs go through OpenTelemetry. Metrics are always served
+at `GET /v1/metrics`; nothing is sent to a collector until the standard
+`OTEL_*` variables select it. [docs/observability.md](docs/observability.md)
+has the variables, the span names and the metric names.
+
 The default is `MT5_BRIDGE_CLIENT_BACKEND=fake`: demo data from the fake
 terminal. `MT5_BRIDGE_CLIENT_BACKEND=real` needs Windows; without a terminal secret it
 attaches to the terminal the operator already logged in.

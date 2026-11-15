@@ -6,6 +6,14 @@ FastAPI's async handlers only ``submit`` a command and ``await`` its
 ``concurrent.futures.Future`` (bridged into asyncio with
 ``asyncio.wrap_future``); they never call the terminal directly. Priority
 order is fixed: orders before execution polling before market polling.
+
+Tracing (plan §84, docs/observability.md): a command submitted from inside a
+trace gets two spans. ``mt5_bridge.worker.dispatch`` starts in ``submit`` on
+the caller's thread and ends when the result is delivered, so it covers the
+wait in the queue; ``mt5_bridge.mt5.call`` is its child, opened on the worker
+thread around the command itself, which is how the trace context crosses the
+thread boundary. A command submitted outside a trace -- every background
+poll, every WebSocket market-data poll -- creates no span at all.
 """
 
 import itertools
@@ -15,11 +23,19 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from enum import IntEnum
+from time import perf_counter
 from typing import TypeVar, cast
 
+from opentelemetry import trace
+from opentelemetry.trace import Span
+
+from mt5_bridge.core import tracing
 from mt5_bridge.mt5.client import Mt5Client
 
 T = TypeVar("T")
+
+DISPATCH_SPAN = "mt5_bridge.worker.dispatch"
+CALL_SPAN = "mt5_bridge.mt5.call"
 
 
 class CommandPriority(IntEnum):
@@ -48,12 +64,41 @@ def _stop_command(_client: Mt5Client) -> None:
     return None
 
 
+def _command_name(command: Callable[[Mt5Client], object]) -> str:
+    """The function that built the command: ``health`` for a lambda written
+    inside ``health``, the function's own name otherwise."""
+    qualified = getattr(command, "__qualname__", None) or type(command).__name__
+    return str(qualified).split(".<locals>")[0]
+
+
+def _start_dispatch_span(
+    priority: CommandPriority, command: Callable[[Mt5Client], object]
+) -> Span | None:
+    if not tracing.in_trace():
+        return None
+    return tracing.start_span(
+        DISPATCH_SPAN,
+        attributes={
+            "mt5_bridge.worker.priority": priority.name.lower(),
+            "mt5_bridge.worker.command": _command_name(command),
+        },
+    )
+
+
+def _end_failed(span: Span | None, error: Exception) -> None:
+    if span is not None:
+        tracing.record_error(span, error)
+        span.end()
+
+
 @dataclass(order=True)
 class _QueueItem:
     priority: int
     sequence: int
     command: Callable[[Mt5Client], object] = field(compare=False)
     future: Future[object] = field(compare=False)
+    dispatch_span: Span | None = field(compare=False, default=None)
+    enqueued_at: float = field(compare=False, default_factory=perf_counter)
 
 
 class BridgeWorker:
@@ -88,22 +133,29 @@ class BridgeWorker:
         instead, so it fails immediately with the same ``WorkerStopped`` a
         command still queued *when* ``stop()`` ran would get."""
         future: Future[object] = Future()
+        dispatch_span = _start_dispatch_span(priority, command)
         if self._stopped:
-            future.set_exception(WorkerStopped("BridgeWorker is stopped"))
+            stopped = WorkerStopped("BridgeWorker is stopped")
+            _end_failed(dispatch_span, stopped)
+            future.set_exception(stopped)
             return cast(Future[T], future)
         if priority is CommandPriority.MARKET_POLL:
             with self._backlog_lock:
                 if self._market_poll_backlog >= self._max_market_poll_backlog:
-                    future.set_exception(
-                        WorkerQueueSaturated(
-                            f"MARKET_POLL backlog is at its cap "
-                            f"({self._max_market_poll_backlog}); command dropped"
-                        )
+                    saturated = WorkerQueueSaturated(
+                        f"MARKET_POLL backlog is at its cap "
+                        f"({self._max_market_poll_backlog}); command dropped"
                     )
+                    _end_failed(dispatch_span, saturated)
+                    future.set_exception(saturated)
                     return cast(Future[T], future)
                 self._market_poll_backlog += 1
         item = _QueueItem(
-            priority=int(priority), sequence=next(self._counter), command=command, future=future
+            priority=int(priority),
+            sequence=next(self._counter),
+            command=command,
+            future=future,
+            dispatch_span=dispatch_span,
         )
         self._queue.put(item)
         return cast(Future[T], future)
@@ -116,14 +168,38 @@ class BridgeWorker:
             with self._backlog_lock:
                 self._market_poll_backlog -= 1
         if not item.future.set_running_or_notify_cancel():
+            if item.dispatch_span is not None:
+                item.dispatch_span.end()
             return True
         try:
-            result = item.command(self._client)
+            result = self._execute(item)
         except Exception as error:  # noqa: BLE001 - delivered to the caller's Future, never lost
             item.future.set_exception(error)
         else:
             item.future.set_result(result)
         return True
+
+    def _execute(self, item: _QueueItem) -> object:
+        """Runs the command, inside ``CALL_SPAN`` when its submitter was in a
+        trace. The dispatch span ends here, before the future resolves, so
+        both spans are finished by the time the caller sees the result."""
+        dispatch_span = item.dispatch_span
+        if dispatch_span is None:
+            return item.command(self._client)
+        try:
+            with tracing.span(
+                CALL_SPAN,
+                context=trace.set_span_in_context(dispatch_span),
+                attributes={
+                    "mt5_bridge.worker.queue_wait_seconds": perf_counter() - item.enqueued_at
+                },
+            ):
+                return item.command(self._client)
+        except Exception as error:
+            tracing.mark_error(dispatch_span, error)
+            raise
+        finally:
+            dispatch_span.end()
 
     def drain(self) -> int:
         """Synchronously process everything currently queued, in priority
@@ -177,7 +253,7 @@ class BridgeWorker:
             if item.priority == int(CommandPriority.MARKET_POLL):
                 with self._backlog_lock:
                     self._market_poll_backlog -= 1
+            abandoned = WorkerStopped("BridgeWorker stopped before this command could run")
+            _end_failed(item.dispatch_span, abandoned)
             if item.future.set_running_or_notify_cancel():
-                item.future.set_exception(
-                    WorkerStopped("BridgeWorker stopped before this command could run")
-                )
+                item.future.set_exception(abandoned)

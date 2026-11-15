@@ -2,8 +2,11 @@
 
 ``configure_metrics`` builds one process-local ``MeterProvider`` with an
 always-attached Prometheus pull reader (cheap; costs nothing unless
-scraped -- ``api.routes_metrics`` exposes it on the existing FastAPI app,
-behind the existing auth). ``register_state_gauges`` registers the
+scraped -- ``api.routes_metrics`` exposes it on the existing FastAPI
+app). ``core.observability`` calls it with the shared
+``Resource`` and, when OTLP metric export is configured, one more reader;
+the provider is never registered as the process global here.
+``register_state_gauges`` registers the
 observable gauges this delivery wires: kill-switch state, dead-man-switch
 armed/expired, terminal connectivity, clock drift, and tick/bar/execution
 poll latency -- each read straight from in-memory state a background loop
@@ -16,14 +19,15 @@ that direction.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from opentelemetry.metrics import CallbackOptions, Meter, Observation, set_meter_provider
+from opentelemetry.metrics import CallbackOptions, Meter, Observation
 from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import MetricReader
 from opentelemetry.sdk.resources import Resource
 from prometheus_client import CollectorRegistry
 
@@ -59,19 +63,20 @@ class MetricsBootstrap:
     metrics: Metrics
 
 
-def configure_metrics(env: Mapping[str, str]) -> MetricsBootstrap:
-    del (
-        env
-    )  # no push-exporter selection for metrics yet; the Prometheus pull reader is unconditional
+def configure_metrics(
+    env: Mapping[str, str],
+    *,
+    resource: Resource | None = None,
+    extra_readers: Sequence[MetricReader] = (),
+) -> MetricsBootstrap:
+    """The Prometheus pull reader is unconditional; ``extra_readers`` adds a
+    push reader chosen by ``core.observability`` (``env`` selects nothing here)."""
+    del env
     registry = CollectorRegistry()
     provider = MeterProvider(
-        resource=Resource.create({"service.name": SERVICE_NAME}),
-        metric_readers=[PrometheusMetricReader(registry=registry)],
+        resource=resource or Resource.create({"service.name": SERVICE_NAME}),
+        metric_readers=[PrometheusMetricReader(registry=registry), *extra_readers],
     )
-    try:
-        set_meter_provider(provider)
-    except Exception:  # noqa: BLE001 - a second registration must never crash boot
-        pass
     meter = provider.get_meter(SERVICE_NAME)
     return MetricsBootstrap(
         provider=provider, meter=meter, registry=registry, metrics=OtelMetrics(meter)
