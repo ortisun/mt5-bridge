@@ -30,7 +30,9 @@ def _parse_decimal(value: object) -> Decimal:
             return Decimal(value)
         except InvalidOperation as error:
             raise ValueError(f"{value!r} is not a valid decimal string") from error
-    raise TypeError("expected a decimal-formatted string, not a bare JSON number")
+    # ValueError, not TypeError: Pydantic reports only a ValueError as a
+    # validation fault (422); a TypeError would escape as a 500.
+    raise ValueError("expected a decimal-formatted string, not a bare JSON number")
 
 
 DecimalStr = Annotated[Decimal, BeforeValidator(_parse_decimal), PlainSerializer(str)]
@@ -42,14 +44,6 @@ class ApiModel(BaseModel):
     rejected) independent of this setting."""
 
     model_config = ConfigDict()
-
-
-class ErrorEnvelope(ApiModel):
-    code: str
-    message: str
-    mt5_retcode: int | None = None
-    mt5_last_error: str | None = None
-    retryable: bool = False
 
 
 class HealthResponse(ApiModel):

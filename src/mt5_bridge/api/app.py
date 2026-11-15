@@ -5,38 +5,16 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from mt5_bridge.api.app_state import AppState
 from mt5_bridge.api.background import start_background_loops
-from mt5_bridge.api.errors import (
-    error_body,
-    handle_http_exception,
-    handle_idempotency_conflict,
-    handle_order_not_found,
-    handle_value_error,
-    handle_worker_unavailable,
-)
+from mt5_bridge.api.errors import install_error_handlers
 from mt5_bridge.api.middleware import MaxBodySizeMiddleware
 from mt5_bridge.api.routes_market import router as market_router
 from mt5_bridge.api.routes_metrics import router as metrics_router
 from mt5_bridge.api.routes_orders import router as orders_router
 from mt5_bridge.api.ws import run_stream_connection
 from mt5_bridge.core.clock_drift import ClockDriftProbe, ntp_drift_probe
-from mt5_bridge.core.order_service import IdempotencyConflict, OrderNotFound, WorkerUnavailable
-
-
-async def _handle_validation_error(request: object, exc: Exception) -> JSONResponse:
-    del request
-    if not isinstance(
-        exc, RequestValidationError
-    ):  # pragma: no cover - handler is scoped to this type
-        raise exc
-    return JSONResponse(
-        status_code=422, content=error_body(code="ValidationError", message=str(exc.errors()))
-    )
 
 
 def create_app(
@@ -67,12 +45,7 @@ def create_app(
     app.include_router(orders_router)
     app.include_router(metrics_router)
 
-    app.add_exception_handler(StarletteHTTPException, handle_http_exception)
-    app.add_exception_handler(IdempotencyConflict, handle_idempotency_conflict)
-    app.add_exception_handler(OrderNotFound, handle_order_not_found)
-    app.add_exception_handler(ValueError, handle_value_error)
-    app.add_exception_handler(WorkerUnavailable, handle_worker_unavailable)
-    app.add_exception_handler(RequestValidationError, _handle_validation_error)
+    install_error_handlers(app)
 
     @app.websocket("/v1/stream")
     async def stream(websocket: WebSocket) -> None:

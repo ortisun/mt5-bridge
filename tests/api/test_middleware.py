@@ -1,5 +1,6 @@
 """MaxBodySizeMiddleware: rejects an oversized body before routing."""
 
+import json
 from collections.abc import Iterable
 
 import pytest
@@ -59,6 +60,12 @@ async def test_a_declared_content_length_over_the_limit_is_rejected_without_read
     )
 
     assert sent[0]["status"] == 413
+    assert (b"content-type", b"application/problem+json") in sent[0]["headers"]
+    body = json.loads(sent[1]["body"])
+    assert body["type"] == "urn:mt5-bridge:problem:payload-too-large"
+    assert body["status"] == 413
+    assert body["code"] == "PayloadTooLarge"
+    assert body["instance"] == "/v1/orders"
 
 
 @pytest.mark.asyncio

@@ -48,18 +48,61 @@ class TestOpenapiDocument:
         missing = REQUIRED_REST_ROUTES - present
         assert missing == set()
 
-    def test_the_error_envelope_has_the_required_fields(self) -> None:
+    def test_the_problem_schema_has_the_rfc_9457_members_and_the_bridge_extensions(self) -> None:
         document = load_openapi()
 
-        error = document["components"]["schemas"]["Error"]
-        assert set(error["required"]) == {"code", "message", "retryable"}
-        assert set(error["properties"]) == {
+        problem = document["components"]["schemas"]["Problem"]
+        assert set(problem["required"]) == {
+            "type",
+            "title",
+            "status",
+            "detail",
             "code",
-            "message",
-            "mt5_retcode",
-            "mt5_last_error",
             "retryable",
         }
+        assert set(problem["properties"]) == {
+            "type",
+            "title",
+            "status",
+            "detail",
+            "instance",
+            "code",
+            "retryable",
+            "mt5_retcode",
+            "mt5_last_error",
+            "errors",
+        }
+
+    def test_every_error_response_is_a_problem_document(self) -> None:
+        document = load_openapi()
+        problem = {"$ref": "#/components/schemas/Problem"}
+
+        checked = 0
+        for path, operations in document["paths"].items():
+            for method, operation in operations.items():
+                if method not in {"get", "post", "patch", "delete", "put"}:
+                    continue
+                for status, response in operation["responses"].items():
+                    if not status.startswith(("4", "5")):
+                        continue
+                    if "$ref" in response:
+                        name = response["$ref"].rsplit("/", 1)[1]
+                        response = document["components"]["responses"][name]
+                    where = f"{method} {path} {status}"
+                    assert set(response["content"]) == {"application/problem+json"}, where
+                    assert response["content"]["application/problem+json"]["schema"] == problem
+                    checked += 1
+        assert checked > 0
+
+    def test_every_operation_declares_the_errors_any_request_can_get(self) -> None:
+        document = load_openapi()
+
+        for path, operations in document["paths"].items():
+            for method, operation in operations.items():
+                if method not in {"get", "post", "patch", "delete", "put"}:
+                    continue
+                missing = {"500", "503"} - set(operation["responses"])
+                assert missing == set(), f"{method} {path} lacks {missing}"
 
     def test_replace_order_result_is_a_discriminated_union(self) -> None:
         document = load_openapi()

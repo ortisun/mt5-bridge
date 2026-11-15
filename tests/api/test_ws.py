@@ -2,6 +2,10 @@
 
 from decimal import Decimal
 
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
+from mt5_bridge.api.ws import INVALID_MESSAGE_CLOSE_CODE
 from mt5_bridge.mt5.models import BookLevel, BookSide, Timeframe
 
 from testkit.app_builder import build_test_app
@@ -18,6 +22,41 @@ def submit_body(client_order_id: str = "co-1") -> dict[str, object]:
         "volume": "1",
         "time_in_force": "DAY",
     }
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"op": "subscribe", "channel": "bars", "symbols": [WINZ25], "timeframe": "M7"},
+        {"op": "subscribe", "channel": "bars", "symbols": [WINZ25]},
+        {"op": "resume", "channel": "executions", "from_seq": "first"},
+        {"op": "resume", "channel": "executions", "from_seq": 0},
+        ["not", "an", "object"],
+    ],
+    ids=["unknown-timeframe", "missing-timeframe", "non-integer-seq", "seq-below-1", "not-object"],
+)
+def test_an_invalid_client_message_closes_with_policy_violation_not_internal_error(
+    message: object,
+) -> None:
+    app, fake_client, _state = build_test_app()
+    del fake_client
+    with TypedTestClient(app) as http, pytest.raises(WebSocketDisconnect) as closed:
+        with http.websocket_connect("/v1/stream") as ws:
+            ws.send_json(message)
+            ws.receive_json()
+
+    assert closed.value.code == INVALID_MESSAGE_CLOSE_CODE == 1008
+
+
+def test_a_frame_that_is_not_json_closes_with_policy_violation() -> None:
+    app, fake_client, _state = build_test_app()
+    del fake_client
+    with TypedTestClient(app) as http, pytest.raises(WebSocketDisconnect) as closed:
+        with http.websocket_connect("/v1/stream") as ws:
+            ws.send_text("{not json")
+            ws.receive_json()
+
+    assert closed.value.code == 1008
 
 
 def test_ping_receives_pong() -> None:

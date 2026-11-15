@@ -1,6 +1,12 @@
 """Real REST responses, from the running app, validated against openapi.yaml."""
 
 from decimal import Decimal
+from typing import Any
+
+import httpx
+import pytest
+
+from mt5_bridge.mt5.fake_client import FakeMt5Client
 
 from testkit.app_builder import build_test_app
 from testkit.contracts import assert_conforms, load_openapi, openapi_schema_validator
@@ -70,29 +76,85 @@ class TestOrderConforms:
         assert_conforms(validator, response.json())
 
 
-class TestErrorEnvelopeConforms:
-    def test_a_404_body_matches_the_error_schema(self) -> None:
-        app, fake_client, _state = build_test_app()
-        del fake_client
-        validator = openapi_schema_validator(OPENAPI, "Error")
+def assert_is_a_problem(response: httpx.Response, status: int) -> dict[str, Any]:
+    """The response is a Problem Details document that matches the contract."""
+    assert response.status_code == status
+    assert response.headers["content-type"] == "application/problem+json"
+    body: dict[str, Any] = response.json()
+    assert_conforms(openapi_schema_validator(OPENAPI, "Problem"), body)
+    assert body["status"] == status
+    return body
+
+
+class TestProblemConforms:
+    def test_a_404_body_is_a_problem(self) -> None:
+        app, _fake_client, _state = build_test_app()
         with TypedTestClient(app) as http:
             response = http.get("/v1/orders/does-not-exist")
 
-        assert response.status_code == 404
-        assert_conforms(validator, response.json())
+        assert_is_a_problem(response, 404)
 
-    def test_a_409_conflict_body_matches_the_error_schema(self) -> None:
-        app, fake_client, _state = build_test_app()
-        del fake_client
-        validator = openapi_schema_validator(OPENAPI, "Error")
+    def test_an_unknown_path_is_an_about_blank_problem(self) -> None:
+        app, _fake_client, _state = build_test_app()
+        with TypedTestClient(app) as http:
+            response = http.get("/v1/no-such-route")
+
+        assert assert_is_a_problem(response, 404)["type"] == "about:blank"
+
+    def test_a_405_body_is_a_problem(self) -> None:
+        app, _fake_client, _state = build_test_app()
+        with TypedTestClient(app) as http:
+            response = http.delete("/v1/health")
+
+        assert_is_a_problem(response, 405)
+
+    def test_a_409_conflict_body_is_a_problem(self) -> None:
+        app, _fake_client, _state = build_test_app()
         with TypedTestClient(app) as http:
             http.post("/v1/orders", json=submit_body("co-3"))
             conflicting = dict(submit_body("co-3"))
             conflicting["volume"] = "2"
             response = http.post("/v1/orders", json=conflicting)
 
-        assert response.status_code == 409
-        assert_conforms(validator, response.json())
+        assert_is_a_problem(response, 409)
+
+    def test_a_413_body_is_a_problem(self) -> None:
+        app, _fake_client, state = build_test_app()
+        oversized = submit_body("x" * (state.settings.max_request_body_bytes + 1))
+        with TypedTestClient(app) as http:
+            response = http.post("/v1/orders", json=oversized)
+
+        assert_is_a_problem(response, 413)
+
+    def test_a_422_body_is_a_problem_with_located_errors(self) -> None:
+        app, _fake_client, _state = build_test_app()
+        invalid = dict(submit_body("co-4"))
+        del invalid["volume"]
+        with TypedTestClient(app) as http:
+            response = http.post("/v1/orders", json=invalid)
+
+        body = assert_is_a_problem(response, 422)
+        assert body["errors"] != []
+
+    def test_a_500_body_is_a_problem(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        app, _fake_client, _state = build_test_app()
+
+        def fail(self: FakeMt5Client) -> None:
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(FakeMt5Client, "terminal_info", fail)
+        with TypedTestClient(app, raise_server_exceptions=False) as http:
+            response = http.get("/v1/health")
+
+        assert_is_a_problem(response, 500)
+
+    def test_a_503_body_is_a_problem(self) -> None:
+        app, fake_client, _state = build_test_app()
+        fake_client.simulate_disconnect()
+        with TypedTestClient(app) as http:
+            response = http.get("/v1/account")
+
+        assert_is_a_problem(response, 503)
 
 
 class TestReplaceOrderResultConforms:

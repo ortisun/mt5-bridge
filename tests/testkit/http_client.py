@@ -21,8 +21,10 @@ from starlette.testclient import WebSocketTestSession
 
 
 class TypedTestClient:
-    def __init__(self, app: FastAPI) -> None:
-        self._client = TestClient(app)
+    def __init__(self, app: FastAPI, *, raise_server_exceptions: bool = True) -> None:
+        """``raise_server_exceptions=False`` returns the 500 response a real
+        client would get instead of re-raising the server's exception."""
+        self._client = TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
     def __enter__(self) -> Self:
         self._client.__enter__()

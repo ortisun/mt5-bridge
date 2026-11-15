@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Request
 
 from mt5_bridge.api.app_state import get_state
-from mt5_bridge.api.errors import http_error
+from mt5_bridge.api.errors import SYMBOL_NOT_FOUND, ProblemError
 from mt5_bridge.api.run_on_worker import run_on_worker
 from mt5_bridge.api.schemas import (
     AccountResponse,
@@ -112,7 +112,7 @@ async def symbol_detail(symbol: str, *, request: Request) -> SymbolDetail:
         state.worker, CommandPriority.MARKET_POLL, lambda c: c.symbol_info(symbol)
     )
     if info is None:
-        raise http_error(404, code="NotFound", message=f"unknown symbol {symbol!r}")
+        raise ProblemError(SYMBOL_NOT_FOUND, f"unknown symbol {symbol!r}")
     local_now = state.trading_day_policy.localize(state.clock.now_utc())
     phase = classify_trading_phase(info, now=local_now, auction_window=state.auction_window)
     return SymbolDetail(
@@ -135,16 +135,15 @@ async def bars(
     *,
     request: Request,
     symbol: str,
-    timeframe: str,
+    timeframe: Timeframe,
     count: int = 100,
 ) -> list[BarResponse]:
     state = get_state(request)
-    parsed_timeframe = Timeframe(timeframe)
     # start_pos=1: never even ask the client for the still-forming bar (rule 28).
     raw_bars = await run_on_worker(
         state.worker,
         CommandPriority.MARKET_POLL,
-        lambda c: c.copy_bars(symbol, parsed_timeframe, 1, count),
+        lambda c: c.copy_bars(symbol, timeframe, 1, count),
     )
     return [
         BarResponse(

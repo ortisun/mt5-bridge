@@ -9,6 +9,8 @@ info:
     document, together with ws_messages.schema.json in this directory, is
     the source of truth for both the bridge server and any client adapter;
     it lives outside both uv projects.
+    Every 4xx and 5xx response is a Problem Details document (RFC 9457,
+    application/problem+json); docs/errors.md lists the problem types.
 servers:
   - url: "{scheme}://{host}:{port}"
     description: >
@@ -34,6 +36,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HealthResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/terminal:
     get:
       operationId: getTerminal
@@ -44,6 +48,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TerminalResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/account:
     get:
       operationId: getAccount
@@ -54,6 +60,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/symbols:
     get:
       operationId: listSymbols
@@ -71,6 +79,9 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/SymbolSummary" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/symbols/{symbol}:
     get:
       operationId: getSymbol
@@ -87,6 +98,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SymbolDetail" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/bars:
     get:
       operationId: getBars
@@ -112,6 +125,9 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Bar" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/ticks/latest:
     get:
       operationId: getLatestTick
@@ -134,6 +150,9 @@ paths:
                 type: array
                 maxItems: 1
                 items: { $ref: "#/components/schemas/Tick" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/ticks:
     get:
       operationId: getTicks
@@ -171,6 +190,9 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Tick" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/book/{symbol}:
     get:
       operationId: getBook
@@ -188,6 +210,8 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/BookLevel" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/orders:
     get:
       operationId: listOpenOrders
@@ -200,6 +224,8 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Order" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       operationId: submitOrder
       summary: Submit order — idempotent by client_order_id.
@@ -222,8 +248,12 @@ paths:
         "409":
           description: A different payload was already used with this client_order_id.
           content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/orders/check:
     post:
       operationId: checkOrder
@@ -240,6 +270,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OrderCheckResult" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/orders/{client_order_id}:
     get:
       operationId: getOrder
@@ -253,6 +287,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       operationId: amendOrder
       summary: Amend supported price/protections/expiry; does not change volume/type.
@@ -273,8 +309,12 @@ paths:
         "409":
           description: The order is not in an amendable state.
           content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       operationId: cancelOrder
       summary: Cancel.
@@ -288,6 +328,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/orders/{client_order_id}/replace:
     post:
       operationId: replaceOrder
@@ -313,8 +355,12 @@ paths:
         "409":
           description: A different payload was already used with this operation_id.
           content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/orders/{client_order_id}/reconcile:
     post:
       operationId: reconcileOrder
@@ -337,8 +383,10 @@ paths:
         "409":
           description: The entry is not UNKNOWN or RECEIVED.
           content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/positions:
     get:
       operationId: listPositions
@@ -350,6 +398,8 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Position" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/history/orders:
     get:
       operationId: listHistoryOrders
@@ -364,6 +414,9 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/HistoryOrder" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/history/deals:
     get:
       operationId: listHistoryDeals
@@ -378,6 +431,9 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Deal" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/kill-switch:
     post:
       operationId: activateKillSwitch
@@ -393,7 +449,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/KillSwitchStatus" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       operationId: rearmKillSwitch
       summary: Rearm — return the kill switch to NORMAL.
@@ -403,6 +462,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/KillSwitchStatus" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/heartbeat:
     post:
       operationId: heartbeat
@@ -414,6 +475,8 @@ paths:
       responses:
         "204":
           description: Lease renewed.
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 components:
   parameters:
     ClientOrderId:
@@ -435,13 +498,37 @@ components:
     NotFound:
       description: Unknown symbol or client_order_id.
       content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    ValidationError:
-      description: Malformed request body.
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PayloadTooLarge:
+      description: The request body exceeds MT5_BRIDGE_MAX_REQUEST_BODY_BYTES.
       content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    ValidationError:
+      description: A request body, query or path value is invalid; `errors` locates each one.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    InternalError:
+      description: The bridge failed; the body never quotes the cause.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    ServiceUnavailable:
+      description: >
+        The bridge worker or the terminal cannot serve the request now, or
+        the clock drift is over its threshold. `retryable` is true and
+        Retry-After says when to try again.
+      headers:
+        Retry-After: { $ref: "#/components/headers/Retry-After" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  headers:
+    Retry-After:
+      description: Seconds to wait before repeating the request (RFC 9110 §10.2.3).
+      schema: { type: integer, minimum: 0 }
   schemas:
     Decimal:
       type: string
@@ -450,15 +537,68 @@ components:
         bare JSON number) so a client's JSON parser cannot round a price or
         quantity through float (plan rule 33).
       pattern: "^-?[0-9]+(\\.[0-9]+)?$"
-    Error:
+    Problem:
       type: object
-      required: [code, message, retryable]
+      description: >
+        A Problem Details document (RFC 9457), the body of every 4xx and 5xx
+        response, sent as application/problem+json. `type`, `title`, `status`,
+        `detail` and `instance` are the standard members; the rest are
+        extension members of this bridge. A client must ignore members it
+        does not know.
+      required: [type, title, status, detail, code, retryable]
       properties:
-        code: { type: string }
-        message: { type: string }
+        type:
+          type: string
+          format: uri-reference
+          description: >
+            Identifies the kind of problem; compared as a string, never
+            dereferenced. `urn:mt5-bridge:problem:<name>` for the bridge's
+            own kinds, `about:blank` for a status the HTTP layer raised with
+            nothing to add (unknown path, method not allowed).
+          examples: ["urn:mt5-bridge:problem:order-not-found"]
+        title:
+          type: string
+          description: Short summary of the kind of problem; the same for every occurrence.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+          description: The HTTP status code of this response.
+        detail:
+          type: string
+          description: What went wrong in this occurrence, for a person to read.
+        instance:
+          type: string
+          format: uri-reference
+          description: The path of the request that failed.
+        code:
+          type: string
+          description: Stable machine-readable name of the kind of problem, one per `type`.
+        retryable:
+          type: boolean
+          description: True when repeating the same request later can succeed.
         mt5_retcode: { type: ["integer", "null"] }
         mt5_last_error: { type: ["string", "null"] }
-        retryable: { type: boolean }
+        errors:
+          type: array
+          description: Present on a validation problem, one entry per invalid value.
+          items: { $ref: "#/components/schemas/ProblemFieldError" }
+    ProblemFieldError:
+      type: object
+      description: >
+        One invalid value. A value in the request body is located by
+        `pointer`; a query, path or header value by `in` and `parameter`.
+      required: [detail]
+      properties:
+        detail: { type: string }
+        pointer:
+          type: string
+          description: JSON Pointer (RFC 6901) into the request body, in URI-fragment form.
+          examples: ["#/volume"]
+        in:
+          type: string
+          enum: [query, path, header, cookie]
+        parameter: { type: string }
     OrderSide:
       type: string
       enum: [BUY, SELL]

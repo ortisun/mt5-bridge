@@ -36,6 +36,10 @@ from mt5_bridge.mt5.client import Mt5Client
 from mt5_bridge.mt5.models import Bar, BookLevel, SourceTimeUnit, Tick, TimeBasis, Timeframe
 
 DEFAULT_POLL_INTERVAL_SECONDS = 0.05
+# RFC 6455 §7.4.1: 1008, a message that violates the endpoint's policy; here,
+# one that is not JSON or does not match ws_messages.schema.json.
+INVALID_MESSAGE_CLOSE_CODE = 1008
+_INVALID_CLIENT_MESSAGE = (ValueError, KeyError, TypeError, AttributeError)
 
 
 def _empty_symbols() -> set[str]:
@@ -269,7 +273,10 @@ async def _handle_client_message(
         return
     if op == "resume" and channel == "executions":
         state.executions_subscribed = True
-        state.executions_next_seq = int(message["from_seq"])
+        from_seq = int(message["from_seq"])
+        if from_seq < 1:
+            raise ValueError("from_seq must be >= 1")
+        state.executions_next_seq = from_seq
         return
 
 
@@ -444,10 +451,16 @@ async def run_stream_connection(
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive_json(), timeout=poll_interval)
+                await _handle_client_message(websocket, raw, state)
             except TimeoutError:
                 pass
-            else:
-                await _handle_client_message(websocket, raw, state)
+            except _INVALID_CLIENT_MESSAGE:
+                # The client's fault, so not the 1011 an escaping exception
+                # would produce (RFC 6455 §7.4.1: 1011 is a server failure).
+                await websocket.close(
+                    code=INVALID_MESSAGE_CLOSE_CODE, reason="invalid client message"
+                )
+                return
             await _publish_market_data(websocket, state, worker=worker, clock=clock)
             await _publish_executions(websocket, state, sequence_log=sequence_log)
             await _publish_status(

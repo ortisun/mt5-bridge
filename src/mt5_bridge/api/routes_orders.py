@@ -6,7 +6,13 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
 from mt5_bridge.api.app_state import get_state
-from mt5_bridge.api.errors import http_error
+from mt5_bridge.api.errors import (
+    ORDER_NOT_FOUND,
+    SYMBOL_NOT_FOUND,
+    UNSUPPORTED_VENUE_CAPABILITY,
+    VALIDATION_ERROR,
+    ProblemError,
+)
 from mt5_bridge.api.run_on_worker import run_on_worker
 from mt5_bridge.api.schemas import (
     AmendOrderRequest,
@@ -66,9 +72,7 @@ async def get_order(
     state = get_state(request)
     entry = state.journal.get_no_transaction(client_order_id)
     if entry is None:
-        raise http_error(
-            404, code="OrderNotFound", message=f"unknown client_order_id {client_order_id!r}"
-        )
+        raise ProblemError(ORDER_NOT_FOUND, f"unknown client_order_id {client_order_id!r}")
     return _entry_to_response(entry)
 
 
@@ -158,13 +162,11 @@ async def check_order(
         state.worker, CommandPriority.ORDER, lambda c: c.symbol_info(body.symbol)
     )
     if symbol_info is None:
-        raise http_error(404, code="NotFound", message=f"unknown symbol {body.symbol!r}")
+        raise ProblemError(SYMBOL_NOT_FOUND, f"unknown symbol {body.symbol!r}")
     filling_mode = select_filling_mode(symbol_info.filling_modes)
     if filling_mode is None:
-        raise http_error(
-            409,
-            code="UnsupportedVenueCapability",
-            message="symbol advertises no supported filling mode",
+        raise ProblemError(
+            UNSUPPORTED_VENUE_CAPABILITY, "symbol advertises no supported filling mode"
         )
     intent = NewOrderIntent(
         symbol=body.symbol,
@@ -337,8 +339,9 @@ async def activate_kill_switch(
     try:
         action = KillSwitchAction(body.action)
     except ValueError as error:
-        raise http_error(
-            422, code="ValidationError", message=f"unknown kill-switch action {body.action!r}"
+        detail = f"unknown kill-switch action {body.action!r}"
+        raise ProblemError(
+            VALIDATION_ERROR, detail, errors=[{"pointer": "#/action", "detail": detail}]
         ) from error
     status = state.kill_switch.activate(
         action, reason="requested through the API", now=state.clock.now_utc()

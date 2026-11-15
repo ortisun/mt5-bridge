@@ -77,6 +77,10 @@ class NotReconcilable(ValueError):
     """Only UNKNOWN or RECEIVED entries can be reconciled on demand."""
 
 
+class OrderNotAmendable(ValueError):
+    """Only an ACKNOWLEDGED entry with a ticket can be amended."""
+
+
 class WorkerUnavailable(Exception):
     """A command was shed (``WorkerQueueSaturated``) or the worker stopped
     before dispatch (``WorkerStopped``) — it is certain the terminal never
@@ -819,7 +823,9 @@ class OrderService:
         if entry is None:
             raise OrderNotFound(client_order_id)
         if entry.ticket is None or entry.state is not BridgeOrderState.ACKNOWLEDGED:
-            raise ValueError(f"{client_order_id!r} is not in an amendable state ({entry.state})")
+            raise OrderNotAmendable(
+                f"{client_order_id!r} is not in an amendable state ({entry.state})"
+            )
 
         try:
             result = await self._run(

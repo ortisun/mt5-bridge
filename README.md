@@ -32,6 +32,9 @@ Rules that hold for the contract:
 
 - Prices, volumes and money travel as decimal strings, never as JSON numbers,
   so a client cannot round one through `float`.
+- Every 4xx and 5xx response is a Problem Details document (RFC 9457,
+  `application/problem+json`). [`docs/errors.md`](docs/errors.md) lists the
+  problem types.
 - A change to the API changes these files first, in the same commit as the
   server code. `tests/contracts/` checks that both documents are valid and
   that real REST responses and WebSocket messages conform to them.
@@ -61,7 +64,7 @@ typings/MetaTrader5/    minimal type stub, so Pyright works off Windows
 tests/                  unit and contract tests, all against the fake terminal
 deploy/                 Windows install and start scripts, example configuration
 tools/                  release helpers: version bump, gate, release notes
-docs/                   install guide, release procedure, runbook and notes
+docs/                   install guide, release procedure, runbook, errors and notes
 ```
 
 `src/mt5_bridge/mt5/real_client.py` is the only module allowed to import
