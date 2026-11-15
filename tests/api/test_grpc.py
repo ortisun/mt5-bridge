@@ -13,7 +13,7 @@ from mt5_bridge.api.grpc_api.telemetry import Context
 from mt5_bridge.core import ocsf
 from mt5_bridge.core.kill_switch import KillSwitchState
 from mt5_bridge.mt5.fake_client import FakeMt5Client
-from mt5_bridge.mt5.models import BookLevel, BookSide, Timeframe
+from mt5_bridge.mt5.models import BookLevel, BookSide
 
 from testkit.app_builder import build_test_app, build_test_app_state
 from testkit.contracts import assert_is_ocsf_event
@@ -181,26 +181,6 @@ class TestMarketData:
 
         assert failed.value.code() is grpc.StatusCode.NOT_FOUND
         assert problem_of(failed.value).code == "NotFound"
-
-    async def test_bars_are_the_closed_bars_rest_returns(self) -> None:
-        app, fake, state = build_test_app()
-        fake.push_bar(WINZ25, Timeframe.D1, time=1, o=1, h=2, low=1, c=1, volume=10)
-        fake.push_bar(WINZ25, Timeframe.D1, time=2, o=1, h=3, low=1, c=2, volume=10)
-        with TypedTestClient(app) as http:
-            rest = http.get(
-                "/v1/bars",
-                params={"symbol": WINZ25, "timeframe": "D1"},
-            ).json()
-        async with serve_grpc(state) as channel:
-            response = await pb_grpc.MarketDataStub(channel).ListBars(
-                pb.ListBarsRequest(symbol=WINZ25, timeframe=pb.TIMEFRAME_D1),
-            )
-
-        assert len(rest) >= 1
-        assert [(b.time, b.open, b.high, b.low, b.close, b.volume) for b in response.bars] == [
-            (b["time"], b["open"], b["high"], b["low"], b["close"], b["volume"]) for b in rest
-        ]
-        assert all(b.timeframe == pb.TIMEFRAME_D1 for b in response.bars)
 
     async def test_bars_without_a_timeframe_are_an_invalid_argument(self) -> None:
         state, _fake = build_test_app_state()

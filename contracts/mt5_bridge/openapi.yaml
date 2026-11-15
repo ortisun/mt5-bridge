@@ -104,7 +104,18 @@ paths:
   /v1/bars:
     get:
       operationId: getBars
-      summary: Closed bars only (plan rule 28).
+      summary: Closed bars of a date range, one page at a time.
+      description: >
+        The closed bars with from_epoch <= time < to_epoch, read in pages
+        (rule 28: the bar still forming is never returned). Bars are asked
+        for by date range and timeframe, never by quantity. The range is cut
+        into time windows of 1000 bar lengths, so total_pages follows from
+        the dates and the timeframe alone and is the same on every page: read
+        page 1, then every page up to total_pages (or follow
+        next_page until it is null). A page holds the bars that exist in its
+        window, oldest first: over a weekend or a holiday it is empty, and
+        that is not the end of the range. Bars older than the terminal's own
+        history ("Max. bars in chart") are absent, not an error.
       parameters:
         - name: symbol
           in: query
@@ -114,18 +125,27 @@ paths:
           in: query
           required: true
           schema: { $ref: "#/components/schemas/Timeframe" }
-        - name: count
+        - name: from_epoch
+          in: query
+          required: true
+          description: Start of the range, inclusive, in seconds since the Unix epoch.
+          schema: { type: integer, minimum: 0 }
+        - name: to_epoch
+          in: query
+          required: true
+          description: End of the range, exclusive, in seconds since the Unix epoch.
+          schema: { type: integer, minimum: 1 }
+        - name: page
           in: query
           required: false
-          schema: { type: integer, minimum: 1, default: 100 }
+          description: The page to read, from 1 to total_pages.
+          schema: { type: integer, minimum: 1, default: 1 }
       responses:
         "200":
-          description: Closed bars, oldest first.
+          description: One page of closed bars, oldest first.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Bar" }
+              schema: { $ref: "#/components/schemas/BarsPage" }
         "422": { $ref: "#/components/responses/ValidationError" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -157,15 +177,16 @@ paths:
   /v1/ticks:
     get:
       operationId: getTicks
-      summary: Recent ticks.
+      summary: Ticks of a date range, one page at a time.
       description: >
-        Ticks matching symbol with time_msc >= from_time_msc, oldest first,
-        capped at count. Omitting from_time_msc does not default to epoch 0
-        (the oldest retained tick): it defaults to a recent window ending
-        now — MT5_BRIDGE_TICKS_DEFAULT_LOOKBACK_SECONDS, 300 (5 minutes) by
-        default — because this bridge keeps no long-term tick history and a
-        caller almost always wants recent ticks. Pass from_time_msc=0
-        explicitly to page from the very oldest retained tick.
+        The ticks with from_time_msc <= time_msc < to_time_msc, oldest first,
+        read in pages of at most 1000 ticks. Ticks are asked for by date
+        range, never by quantity. The number of ticks in a period is not
+        known before reading them, so there is no page count: send the first
+        request without cursor, then repeat it with the next_cursor of each
+        answer until next_cursor is null. A page can hold fewer than 1000
+        ticks, or none, and still have a next_cursor. Keep symbol,
+        from_time_msc and to_time_msc the same for every page of one range.
       parameters:
         - name: symbol
           in: query
@@ -173,24 +194,25 @@ paths:
           schema: { type: string }
         - name: from_time_msc
           in: query
-          required: false
-          description: >
-            Lower bound, milliseconds since the Unix epoch. Omit to use the
-            server's default lookback window (see the operation description)
-            rather than the oldest retained tick.
+          required: true
+          description: Start of the range, inclusive, in milliseconds since the Unix epoch.
           schema: { type: integer, minimum: 0 }
-        - name: count
+        - name: to_time_msc
+          in: query
+          required: true
+          description: End of the range, exclusive, in milliseconds since the Unix epoch.
+          schema: { type: integer, minimum: 1 }
+        - name: cursor
           in: query
           required: false
-          schema: { type: integer, minimum: 1, default: 100 }
+          description: The next_cursor of the previous page; omit it for the first page.
+          schema: { type: string }
       responses:
         "200":
-          description: Ticks, oldest first.
+          description: One page of ticks, oldest first.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Tick" }
+              schema: { $ref: "#/components/schemas/TicksPage" }
         "422": { $ref: "#/components/responses/ValidationError" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -751,6 +773,41 @@ components:
         ask: { $ref: "#/components/schemas/Decimal" }
         last: { $ref: "#/components/schemas/Decimal" }
         volume: { $ref: "#/components/schemas/Decimal" }
+    BarsPage:
+      type: object
+      required:
+        [symbol, timeframe, from_epoch, to_epoch, page, total_pages, next_page, bars]
+      properties:
+        symbol: { type: string }
+        timeframe: { type: string }
+        from_epoch: { type: integer }
+        to_epoch: { type: integer }
+        page: { type: integer, minimum: 1 }
+        total_pages:
+          type: integer
+          minimum: 1
+          description: How many pages the range has; the same on every page.
+        next_page:
+          type: [integer, "null"]
+          description: The page to read next; null on the last page.
+        bars:
+          type: array
+          items: { $ref: "#/components/schemas/Bar" }
+    TicksPage:
+      type: object
+      required: [symbol, from_time_msc, to_time_msc, next_cursor, ticks]
+      properties:
+        symbol: { type: string }
+        from_time_msc: { type: integer }
+        to_time_msc: { type: integer }
+        next_cursor:
+          type: [string, "null"]
+          description: >
+            What to send as cursor to read the next page; null when the range
+            has been read to its end.
+        ticks:
+          type: array
+          items: { $ref: "#/components/schemas/Tick" }
     BookLevel:
       type: object
       required: [side, price, volume]

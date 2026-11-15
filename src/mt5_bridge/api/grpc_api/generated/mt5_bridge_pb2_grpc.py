@@ -121,7 +121,9 @@ class MarketDataServicer:
         raise NotImplementedError('Method not implemented!')
 
     def ListBars(self, request, context):
-        """Closed bars only, oldest first; the still-forming bar is never returned.
+        """The closed bars of a date range, one page at a time; the still-forming
+        bar is never returned. `total_pages` follows from the dates and the
+        timeframe alone; a page over a weekend or a holiday is empty.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -135,7 +137,9 @@ class MarketDataServicer:
         raise NotImplementedError('Method not implemented!')
 
     def ListTicks(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """The ticks of a date range, one page at a time: repeat the request with
+        `next_cursor` until the response has none.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')

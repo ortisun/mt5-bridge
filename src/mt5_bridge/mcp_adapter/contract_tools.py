@@ -27,7 +27,6 @@ AGENT_NOTES: dict[str, str] = {
         "Read this before building an order: prices must be multiples of tick_size and "
         "volumes multiples of volume_step within volume_min and volume_max."
     ),
-    "getBars": "The bar still forming is never returned.",
     "listOpenOrders": "This is the bridge's own journal; an order sent outside the bridge is not here.",
     "submitOrder": (
         "Sends a real order to the broker account. Choose a fresh, unique client_order_id; "

@@ -21,6 +21,7 @@ evidence that MT5's own floats behave as documented remains pending
 (Windows/UTM smoke test, out of scope here).
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -312,6 +313,23 @@ class RealMt5Client:
         )
         if raw is None:
             return ()
+        return self._convert_bars(symbol, timeframe, raw)
+
+    def copy_bars_range(
+        self, symbol: str, timeframe: Timeframe, date_from_epoch: int, date_to_epoch: int
+    ) -> tuple[Bar, ...]:
+        # copy_rates_range includes both bounds (open time <= date_to); the
+        # port excludes the upper one.
+        raw = MetaTrader5.copy_rates_range(
+            symbol, _TIMEFRAME_TO_MT5[timeframe], date_from_epoch, date_to_epoch - 1
+        )
+        if raw is None:
+            return ()
+        return self._convert_bars(symbol, timeframe, raw)
+
+    def _convert_bars(
+        self, symbol: str, timeframe: Timeframe, raw: Sequence[MetaTrader5.BarRow]
+    ) -> tuple[Bar, ...]:
         # ``start_pos >= 1`` already asks the terminal to skip the forming
         # bar, but rule 28 never trusts that alone (mirrors ``BarPoller``'s
         # own defensive filter): derive ``is_closed`` from this bar's own

@@ -137,6 +137,16 @@ class FakeMt5Client:
         begin = max(0, end - count)
         return tuple(ordered[begin:end])
 
+    def copy_bars_range(
+        self, symbol: str, timeframe: Timeframe, date_from_epoch: int, date_to_epoch: int
+    ) -> tuple[Bar, ...]:
+        self._ensure_connected()
+        return tuple(
+            bar
+            for bar in self._bars.get((symbol, timeframe), [])
+            if date_from_epoch <= bar.time < date_to_epoch
+        )
+
     def copy_ticks(self, symbol: str, date_from_msc: int, count: int) -> tuple[Tick, ...]:
         self._ensure_connected()
         history = self._tick_history.get(symbol, [])

@@ -100,7 +100,7 @@
       "operation_id": "getBars",
       "method": "GET",
       "path": "/v1/bars",
-      "description": "Closed bars only. The bar still forming is never returned.",
+      "description": "Closed bars of a date range, one page at a time. The closed bars with from_epoch <= time < to_epoch, read in pages. Bars are asked for by date range and timeframe, never by quantity. The range is cut into time windows of 1000 bar lengths, so total_pages follows from the dates and the timeframe alone and is the same on every page: read page 1, then every page up to total_pages (or follow next_page until it is null). A page holds the bars that exist in its window, oldest first: over a weekend or a holiday it is empty, and that is not the end of the range. Bars older than the terminal's own history (\"Max. bars in chart\") are absent, not an error.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -121,15 +121,28 @@
               "MN1"
             ]
           },
-          "count": {
+          "from_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Start of the range, inclusive, in seconds since the Unix epoch."
+          },
+          "to_epoch": {
             "type": "integer",
             "minimum": 1,
-            "default": 100
+            "description": "End of the range, exclusive, in seconds since the Unix epoch."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1,
+            "description": "The page to read, from 1 to total_pages."
           }
         },
         "required": [
           "symbol",
-          "timeframe"
+          "timeframe",
+          "from_epoch",
+          "to_epoch"
         ],
         "additionalProperties": false
       },
@@ -137,7 +150,9 @@
       "query_params": [
         "symbol",
         "timeframe",
-        "count"
+        "from_epoch",
+        "to_epoch",
+        "page"
       ],
       "body_params": []
     },
@@ -170,7 +185,7 @@
       "operation_id": "getTicks",
       "method": "GET",
       "path": "/v1/ticks",
-      "description": "Recent ticks. Ticks matching symbol with time_msc >= from_time_msc, oldest first, capped at count. Omitting from_time_msc does not default to epoch 0 (the oldest retained tick): it defaults to a recent window ending now — MT5_BRIDGE_TICKS_DEFAULT_LOOKBACK_SECONDS, 300 (5 minutes) by default — because this bridge keeps no long-term tick history and a caller almost always wants recent ticks. Pass from_time_msc=0 explicitly to page from the very oldest retained tick.",
+      "description": "Ticks of a date range, one page at a time. The ticks with from_time_msc <= time_msc < to_time_msc, oldest first, read in pages of at most 1000 ticks. Ticks are asked for by date range, never by quantity. The number of ticks in a period is not known before reading them, so there is no page count: send the first request without cursor, then repeat it with the next_cursor of each answer until next_cursor is null. A page can hold fewer than 1000 ticks, or none, and still have a next_cursor. Keep symbol, from_time_msc and to_time_msc the same for every page of one range.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -180,16 +195,22 @@
           "from_time_msc": {
             "type": "integer",
             "minimum": 0,
-            "description": "Lower bound, milliseconds since the Unix epoch. Omit to use the server's default lookback window (see the operation description) rather than the oldest retained tick."
+            "description": "Start of the range, inclusive, in milliseconds since the Unix epoch."
           },
-          "count": {
+          "to_time_msc": {
             "type": "integer",
             "minimum": 1,
-            "default": 100
+            "description": "End of the range, exclusive, in milliseconds since the Unix epoch."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "The next_cursor of the previous page; omit it for the first page."
           }
         },
         "required": [
-          "symbol"
+          "symbol",
+          "from_time_msc",
+          "to_time_msc"
         ],
         "additionalProperties": false
       },
@@ -197,7 +218,8 @@
       "query_params": [
         "symbol",
         "from_time_msc",
-        "count"
+        "to_time_msc",
+        "cursor"
       ],
       "body_params": []
     },

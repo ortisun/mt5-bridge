@@ -71,6 +71,17 @@ def test_history_queries_travel_to_the_terminal_on_its_wall_clock() -> None:
     assert missed == ()
 
 
+def test_a_bar_range_travels_on_the_wall_clock_and_returns_in_true_utc() -> None:
+    fake, terminal = wall_terminal()
+    fake.push_bar(WINZ25, Timeframe.M1, time=WALL_1003, o=1, h=1, low=1, c=1, volume=1)
+
+    inside = terminal.copy_bars_range(WINZ25, Timeframe.M1, UTC_1303, UTC_1303 + 60)
+    before = terminal.copy_bars_range(WINZ25, Timeframe.M1, UTC_1303 - 60, UTC_1303)
+
+    assert [(bar.time, bar.source_time) for bar in inside] == [(UTC_1303, WALL_1003)]
+    assert before == ()
+
+
 def test_everything_else_is_delegated_unchanged() -> None:
     fake, terminal = wall_terminal()
 

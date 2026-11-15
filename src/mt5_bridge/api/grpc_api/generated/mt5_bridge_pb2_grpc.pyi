@@ -66,10 +66,16 @@ class MarketDataStub:
     ListSymbols: _grpc.UnaryUnaryMultiCallable[_mt5_bridge_pb2.ListSymbolsRequest, _mt5_bridge_pb2.ListSymbolsResponse]
     GetSymbol: _grpc.UnaryUnaryMultiCallable[_mt5_bridge_pb2.GetSymbolRequest, _mt5_bridge_pb2.SymbolDetail]
     ListBars: _grpc.UnaryUnaryMultiCallable[_mt5_bridge_pb2.ListBarsRequest, _mt5_bridge_pb2.ListBarsResponse]
-    """Closed bars only, oldest first; the still-forming bar is never returned."""
+    """The closed bars of a date range, one page at a time; the still-forming
+    bar is never returned. `total_pages` follows from the dates and the
+    timeframe alone; a page over a weekend or a holiday is empty.
+    """
     GetLatestTick: _grpc.UnaryUnaryMultiCallable[_mt5_bridge_pb2.GetLatestTickRequest, _mt5_bridge_pb2.GetLatestTickResponse]
     """The terminal's current quote; `tick` is absent when it has none."""
     ListTicks: _grpc.UnaryUnaryMultiCallable[_mt5_bridge_pb2.ListTicksRequest, _mt5_bridge_pb2.ListTicksResponse]
+    """The ticks of a date range, one page at a time: repeat the request with
+    `next_cursor` until the response has none.
+    """
     GetBook: _grpc.UnaryUnaryMultiCallable[_mt5_bridge_pb2.GetBookRequest, _mt5_bridge_pb2.GetBookResponse]
     """Empty when the terminal has no depth for the symbol."""
 
@@ -87,10 +93,16 @@ class MarketDataAsyncStub(MarketDataStub):
     ListSymbols: _aio.UnaryUnaryMultiCallable[_mt5_bridge_pb2.ListSymbolsRequest, _mt5_bridge_pb2.ListSymbolsResponse]  # type: ignore[assignment]
     GetSymbol: _aio.UnaryUnaryMultiCallable[_mt5_bridge_pb2.GetSymbolRequest, _mt5_bridge_pb2.SymbolDetail]  # type: ignore[assignment]
     ListBars: _aio.UnaryUnaryMultiCallable[_mt5_bridge_pb2.ListBarsRequest, _mt5_bridge_pb2.ListBarsResponse]  # type: ignore[assignment]
-    """Closed bars only, oldest first; the still-forming bar is never returned."""
+    """The closed bars of a date range, one page at a time; the still-forming
+    bar is never returned. `total_pages` follows from the dates and the
+    timeframe alone; a page over a weekend or a holiday is empty.
+    """
     GetLatestTick: _aio.UnaryUnaryMultiCallable[_mt5_bridge_pb2.GetLatestTickRequest, _mt5_bridge_pb2.GetLatestTickResponse]  # type: ignore[assignment]
     """The terminal's current quote; `tick` is absent when it has none."""
     ListTicks: _aio.UnaryUnaryMultiCallable[_mt5_bridge_pb2.ListTicksRequest, _mt5_bridge_pb2.ListTicksResponse]  # type: ignore[assignment]
+    """The ticks of a date range, one page at a time: repeat the request with
+    `next_cursor` until the response has none.
+    """
     GetBook: _aio.UnaryUnaryMultiCallable[_mt5_bridge_pb2.GetBookRequest, _mt5_bridge_pb2.GetBookResponse]  # type: ignore[assignment]
     """Empty when the terminal has no depth for the symbol."""
 
@@ -141,7 +153,10 @@ class MarketDataServicer(metaclass=_abc_1.ABCMeta):
         request: _mt5_bridge_pb2.ListBarsRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_mt5_bridge_pb2.ListBarsResponse, _abc.Awaitable[_mt5_bridge_pb2.ListBarsResponse]]:
-        """Closed bars only, oldest first; the still-forming bar is never returned."""
+        """The closed bars of a date range, one page at a time; the still-forming
+        bar is never returned. `total_pages` follows from the dates and the
+        timeframe alone; a page over a weekend or a holiday is empty.
+        """
 
     @_abc_1.abstractmethod
     def GetLatestTick(
@@ -156,7 +171,10 @@ class MarketDataServicer(metaclass=_abc_1.ABCMeta):
         self,
         request: _mt5_bridge_pb2.ListTicksRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_mt5_bridge_pb2.ListTicksResponse, _abc.Awaitable[_mt5_bridge_pb2.ListTicksResponse]]: ...
+    ) -> _typing.Union[_mt5_bridge_pb2.ListTicksResponse, _abc.Awaitable[_mt5_bridge_pb2.ListTicksResponse]]:
+        """The ticks of a date range, one page at a time: repeat the request with
+        `next_cursor` until the response has none.
+        """
 
     @_abc_1.abstractmethod
     def GetBook(

@@ -57,14 +57,6 @@ def test_worker_and_request_limits_are_read_from_the_environment() -> None:
     assert settings.max_request_body_bytes == 1024
 
 
-def test_ticks_default_lookback_has_a_safe_default_and_is_read_from_the_environment() -> None:
-    default = BridgeSettings.from_env({})
-    overridden = BridgeSettings.from_env({"MT5_BRIDGE_TICKS_DEFAULT_LOOKBACK_SECONDS": "60"})
-
-    assert default.ticks_default_lookback_seconds == 300
-    assert overridden.ticks_default_lookback_seconds == 60
-
-
 def test_trading_day_time_zone_defaults_to_b3_and_is_read_from_the_environment() -> None:
     default = BridgeSettings.from_env({})
     overridden = BridgeSettings.from_env({"MT5_BRIDGE_TRADING_DAY_TIME_ZONE": "UTC"})

@@ -40,7 +40,6 @@ class BridgeSettings:
     max_request_body_bytes: int
     expected_login: int | None
     expected_server: str | None
-    ticks_default_lookback_seconds: int
     trading_day_time_zone: str
     equity_max_age_seconds: float
     quote_max_age_seconds: float
@@ -86,9 +85,6 @@ class BridgeSettings:
             max_request_body_bytes=int(env.get("MT5_BRIDGE_MAX_REQUEST_BODY_BYTES", "65536")),
             expected_login=_optional_int(env.get("MT5_BRIDGE_EXPECTED_LOGIN")),
             expected_server=env.get("MT5_BRIDGE_EXPECTED_SERVER") or None,
-            ticks_default_lookback_seconds=int(
-                env.get("MT5_BRIDGE_TICKS_DEFAULT_LOOKBACK_SECONDS", "300")
-            ),
             trading_day_time_zone=env.get("MT5_BRIDGE_TRADING_DAY_TIME_ZONE", "America/Sao_Paulo"),
             equity_max_age_seconds=float(env.get("MT5_BRIDGE_EQUITY_MAX_AGE_SECONDS", "30")),
             quote_max_age_seconds=float(env.get("MT5_BRIDGE_QUOTE_MAX_AGE_SECONDS", "5")),
