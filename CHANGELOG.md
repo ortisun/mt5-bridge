@@ -8,6 +8,7 @@ REST, WebSocket or gRPC contract.
 
 ### Feat
 
+- **contract**: read bars and ticks by date range, in pages
 - **mcp**: add an mcp adapter that exposes the contract to ai agents
 - **contract**: add a gRPC API next to REST and the WebSocket stream
 - **contract**: publish logs, audit entries and stream messages as OCSF events
