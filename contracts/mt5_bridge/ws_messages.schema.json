@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ortisun/mt5-bridge/contracts/mt5_bridge/ws_messages.schema.json",
+  "title": "mt5-bridge /v1/stream messages",
+  "description": "Plan section 114 WebSocket v1. Client ops (subscribe, unsubscribe, resume, ping) and every server message shape: the data envelope, RESYNC_REQUIRED, and pong.",
+  "$defs": {
+    "Channel": {
+      "type": "string",
+      "enum": ["ticks", "bars", "book", "executions", "account", "status"]
+    },
+    "Timeframe": {
+      "type": "string",
+      "enum": ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
+    },
+    "SourceTimeUnit": {
+      "type": "string",
+      "enum": ["seconds", "milliseconds"]
+    },
+    "TimeBasis": {
+      "type": "string",
+      "enum": ["exchange_reported", "bridge_observed"]
+    },
+    "Decimal": {
+      "type": "string",
+      "description": "A base-10 decimal amount, always a string, never a bare JSON number (plan rule 33).",
+      "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+    },
+    "BridgeOrderState": {
+      "type": "string",
+      "enum": [
+        "RECEIVED", "SUBMITTED", "ACKNOWLEDGED", "PARTIALLY_FILLED", "FILLED",
+        "PENDING_CANCEL", "PENDING_REPLACE", "REPLACED", "REJECTED", "CANCELED",
+        "EXPIRED", "UNKNOWN"
+      ]
+    },
+    "KillSwitchStateValue": {
+      "type": "string",
+      "enum": ["NORMAL", "HALTED", "CANCELED_ALL", "FLATTENED"]
+    },
+    "TradingPhaseValue": {
+      "type": "string",
+      "description": "A bridge-side approximation from a symbol's own trading_allowed/sessions data (plan section 114 'B3 Specifics'), never a broker-confirmed exchange phase.",
+      "enum": ["CONTINUOUS", "PRE_OPEN_AUCTION", "CLOSING_AUCTION", "HALTED", "CLOSED"]
+    },
+    "TickPayload": {
+      "type": "object",
+      "required": ["symbol", "bid", "ask", "last", "volume"],
+      "properties": {
+        "symbol": { "type": "string", "minLength": 1 },
+        "bid": { "$ref": "#/$defs/Decimal" },
+        "ask": { "$ref": "#/$defs/Decimal" },
+        "last": { "$ref": "#/$defs/Decimal" },
+        "volume": { "$ref": "#/$defs/Decimal" }
+      },
+      "additionalProperties": false
+    },
+    "BarPayload": {
+      "type": "object",
+      "required": ["symbol", "timeframe", "open", "high", "low", "close", "volume"],
+      "properties": {
+        "symbol": { "type": "string", "minLength": 1 },
+        "timeframe": { "$ref": "#/$defs/Timeframe" },
+        "open": { "$ref": "#/$defs/Decimal" },
+        "high": { "$ref": "#/$defs/Decimal" },
+        "low": { "$ref": "#/$defs/Decimal" },
+        "close": { "$ref": "#/$defs/Decimal" },
+        "volume": { "$ref": "#/$defs/Decimal" }
+      },
+      "additionalProperties": false
+    },
+    "BookLevel": {
+      "type": "object",
+      "required": ["side", "price", "volume"],
+      "properties": {
+        "side": { "type": "string", "enum": ["BUY", "SELL"] },
+        "price": { "$ref": "#/$defs/Decimal" },
+        "volume": { "$ref": "#/$defs/Decimal" }
+      },
+      "additionalProperties": false,
+      "description": "Matches the REST GET /v1/book/{symbol} level shape (contracts/mt5_bridge/openapi.yaml BookLevel)."
+    },
+    "BookPayload": {
+      "type": "object",
+      "required": ["symbol", "levels"],
+      "properties": {
+        "symbol": { "type": "string", "minLength": 1 },
+        "levels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/BookLevel" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionPayload": {
+      "type": "object",
+      "required": ["client_order_id", "symbol", "state", "ticket", "mt5_retcode", "reason"],
+      "properties": {
+        "client_order_id": { "type": "string", "minLength": 1 },
+        "symbol": { "type": "string", "minLength": 1 },
+        "state": { "$ref": "#/$defs/BridgeOrderState" },
+        "ticket": { "type": ["integer", "null"] },
+        "mt5_retcode": { "type": ["integer", "null"] },
+        "reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "StatusPayload": {
+      "type": "object",
+      "required": ["kill_switch_state", "terminal_connected"],
+      "properties": {
+        "kill_switch_state": { "$ref": "#/$defs/KillSwitchStateValue" },
+        "terminal_connected": {
+          "type": "boolean",
+          "description": "Terminal<->broker connection state (plan section 114 UTM VM Operations watchdog); every status message carries the current value, not just a transition event."
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Present only on a trading-phase evidence message: the symbol whose phase changed."
+        },
+        "trading_phase": { "$ref": "#/$defs/TradingPhaseValue" }
+      },
+      "additionalProperties": false,
+      "dependentRequired": {
+        "symbol": ["trading_phase"],
+        "trading_phase": ["symbol"]
+      }
+    },
+    "AccountPayload": {
+      "type": "object",
+      "required": ["balance", "equity", "margin", "margin_free"],
+      "properties": {
+        "balance": { "$ref": "#/$defs/Decimal" },
+        "equity": { "$ref": "#/$defs/Decimal" },
+        "margin": { "$ref": "#/$defs/Decimal" },
+        "margin_free": { "$ref": "#/$defs/Decimal" }
+      },
+      "additionalProperties": false
+    },
+    "SubscribeMessage": {
+      "type": "object",
+      "required": ["op", "channel"],
+      "properties": {
+        "op": { "const": "subscribe" },
+        "channel": { "$ref": "#/$defs/Channel" },
+        "symbols": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "timeframe": { "$ref": "#/$defs/Timeframe" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "channel": { "const": "bars" } },
+            "required": ["channel"]
+          },
+          "then": { "required": ["symbols", "timeframe"] }
+        },
+        {
+          "if": {
+            "properties": { "channel": { "enum": ["ticks", "book"] } },
+            "required": ["channel"]
+          },
+          "then": { "required": ["symbols"] }
+        }
+      ]
+    },
+    "UnsubscribeMessage": {
+      "type": "object",
+      "required": ["op", "channel"],
+      "properties": {
+        "op": { "const": "unsubscribe" },
+        "channel": { "$ref": "#/$defs/Channel" },
+        "symbols": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "timeframe": { "$ref": "#/$defs/Timeframe" }
+      }
+    },
+    "ResumeMessage": {
+      "type": "object",
+      "required": ["op", "channel", "from_seq"],
+      "properties": {
+        "op": { "const": "resume" },
+        "channel": { "const": "executions" },
+        "from_seq": { "type": "integer", "minimum": 1 }
+      },
+      "description": "Only 'executions' is durable/resumable (plan section 114); ticks/bars/book are not — a gap means the client reloads through REST."
+    },
+    "PingMessage": {
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": { "const": "ping" }
+      }
+    },
+    "ClientMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/SubscribeMessage" },
+        { "$ref": "#/$defs/UnsubscribeMessage" },
+        { "$ref": "#/$defs/ResumeMessage" },
+        { "$ref": "#/$defs/PingMessage" }
+      ]
+    },
+    "PongMessage": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "pong" }
+      },
+      "additionalProperties": false
+    },
+    "ResyncRequiredMessage": {
+      "type": "object",
+      "required": ["channel", "type"],
+      "properties": {
+        "channel": { "const": "executions" },
+        "type": { "const": "RESYNC_REQUIRED" }
+      },
+      "additionalProperties": false,
+      "description": "Sent instead of an envelope when a resume's from_seq fell outside the retained window (plan section 114). The client must reconcile via REST before resuming again."
+    },
+    "StreamEnvelope": {
+      "type": "object",
+      "required": [
+        "channel",
+        "stream_id",
+        "seq",
+        "ts_utc",
+        "source_time_raw",
+        "source_time_unit",
+        "time_basis",
+        "received_at",
+        "payload"
+      ],
+      "properties": {
+        "channel": { "$ref": "#/$defs/Channel" },
+        "stream_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "'executions'/'account'/'status' are single global streams; ticks/bars/book are one stream per subscription (plan section 114: 'filtered market streams receive their own per-subscription sequence')."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonic per stream_id. Durable and resumable only for the executions channel."
+        },
+        "ts_utc": { "type": "string", "format": "date-time" },
+        "source_time_raw": { "type": "integer" },
+        "source_time_unit": { "$ref": "#/$defs/SourceTimeUnit" },
+        "time_basis": { "$ref": "#/$defs/TimeBasis" },
+        "received_at": { "type": "string", "format": "date-time" },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "channel": { "const": "ticks" } }, "required": ["channel"] },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/TickPayload" } } }
+        },
+        {
+          "if": { "properties": { "channel": { "const": "bars" } }, "required": ["channel"] },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/BarPayload" } } }
+        },
+        {
+          "if": { "properties": { "channel": { "const": "book" } }, "required": ["channel"] },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/BookPayload" } } }
+        },
+        {
+          "if": {
+            "properties": { "channel": { "const": "executions" } },
+            "required": ["channel"]
+          },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/ExecutionPayload" } } }
+        },
+        {
+          "if": { "properties": { "channel": { "const": "status" } }, "required": ["channel"] },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/StatusPayload" } } }
+        },
+        {
+          "if": { "properties": { "channel": { "const": "account" } }, "required": ["channel"] },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/AccountPayload" } } }
+        }
+      ]
+    },
+    "ServerMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/StreamEnvelope" },
+        { "$ref": "#/$defs/ResyncRequiredMessage" },
+        { "$ref": "#/$defs/PongMessage" }
+      ]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/ClientMessage" },
+    { "$ref": "#/$defs/ServerMessage" }
+  ]
+}
